@@ -11,7 +11,6 @@ app.use(express.json());
 
 app.get('/api/patients', async (req, res) => {
   const { search } = req.query;
-  console.log(search);
   try {
     let query = 'SELECT * FROM Patient';
     let params = [];
@@ -114,21 +113,129 @@ app.get('/api/appointments', async (req, res) => {
   }
 });
 
-app.get('/api/stats', async (req, res) => {
+app.get('/api/dentists', async (req, res) => {
+  const { search } = req.query;
   try {
-    const [patients] = await db.query('SELECT COUNT(*) as count FROM Patient');
-    const [appointmentsToday] = await db.query(
-      'SELECT COUNT(*) as count FROM Appointment WHERE DATE(date_time) = CURDATE()'
-    );
-    const [revenue] = await db.query(
-      'SELECT SUM(amount) as total FROM Invoice'
-    );
+    let query = 'SELECT * FROM Dentist';
+    let params = [];
+    if (search) {
+      query += ' WHERE last_name LIKE ? OR specialization LIKE ?';
+      params = [`%${search}%`, `%${search}%`];
+    }
+    const [rows] = await db.query(query, params);
+    res.json(rows);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
 
-    res.json({
-      patientsCount: patients[0].count,
-      appointmentsToday: appointmentsToday[0].count,
-      revenue: revenue[0].total || 0,
-    });
+app.post('/api/dentists', async (req, res) => {
+  const {
+    first_name,
+    last_name,
+    specialization,
+    experience,
+    license_number,
+    schedule,
+  } = req.body;
+  try {
+    const [result] = await db.query(
+      `INSERT INTO Dentist (first_name, last_name, specialization, experience, license_number, schedule) 
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [
+        first_name,
+        last_name,
+        specialization,
+        experience,
+        license_number,
+        schedule,
+      ]
+    );
+    res.status(201).json({ id: result.insertId, ...req.body });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.put('/api/dentists/:id', async (req, res) => {
+  const { id } = req.params;
+  const {
+    first_name,
+    last_name,
+    specialization,
+    experience,
+    license_number,
+    schedule,
+  } = req.body;
+  try {
+    await db.query(
+      `UPDATE Dentist SET first_name=?, last_name=?, specialization=?, experience=?, license_number=?, schedule=? 
+       WHERE id=?`,
+      [
+        first_name,
+        last_name,
+        specialization,
+        experience,
+        license_number,
+        schedule,
+        id,
+      ]
+    );
+    res.json({ message: 'Стоматолог обновлен' });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.delete('/api/dentists/:id', async (req, res) => {
+  try {
+    await db.query('DELETE FROM Dentist WHERE id = ?', [req.params.id]);
+    res.json({ message: 'Стоматолог удален' });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/assistants', async (req, res) => {
+  try {
+    const [rows] = await db.query('SELECT * FROM Assistant');
+    res.json(rows);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/assistants', async (req, res) => {
+  const { first_name, last_name, position, experience } = req.body;
+  try {
+    const [result] = await db.query(
+      `INSERT INTO Assistant (first_name, last_name, position, experience) VALUES (?, ?, ?, ?)`,
+      [first_name, last_name, position, experience]
+    );
+    res.status(201).json({ id: result.insertId, ...req.body });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.put('/api/assistants/:id', async (req, res) => {
+  const { id } = req.params;
+  const { first_name, last_name, position, experience } = req.body;
+  try {
+    await db.query(
+      `UPDATE Assistant SET first_name=?, last_name=?, position=?, experience=? WHERE id=?`,
+      [first_name, last_name, position, experience, id]
+    );
+    res.json({ message: 'Ассистент обновлен' });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.delete('/api/assistants/:id', async (req, res) => {
+  try {
+    await db.query('DELETE FROM Assistant WHERE id = ?', [req.params.id]);
+    res.json({ message: 'Ассистент удален' });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

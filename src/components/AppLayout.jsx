@@ -5,6 +5,9 @@ import {
   CalendarOutlined,
   MedicineBoxOutlined,
   DashboardOutlined,
+  TeamOutlined,
+  SmileFilled,
+  SmileOutlined,
 } from '@ant-design/icons';
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
 
@@ -19,6 +22,8 @@ const AppLayout = () => {
   const menuItems = [
     { key: '/', icon: <DashboardOutlined />, label: 'Дашборд' },
     { key: '/patients', icon: <UserOutlined />, label: 'Пациенты' },
+    { key: '/dentists', icon: <TeamOutlined />, label: 'Стоматологи' },
+    { key: '/assistants', icon: <SmileOutlined />, label: 'Ассистенты' },
     { key: '/appointments', icon: <CalendarOutlined />, label: 'Приёмы' },
     { key: '/treatments', icon: <MedicineBoxOutlined />, label: 'Лечение' },
   ];
