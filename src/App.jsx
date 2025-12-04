@@ -6,11 +6,8 @@ import Patients from './pages/Patients';
 import Appointments from './pages/Appointments';
 import Dentists from './pages/Dentists';
 import Assistants from './pages/Assistants';
-
-// Заглушка для страницы Лечения
-const Treatments = () => (
-  <div>Здесь будет прайс-лист и управление услугами</div>
-);
+import Inventory from './pages/Inventory';
+import Treatments from './pages/Treatments';
 
 const App = () => {
   return (
@@ -22,6 +19,7 @@ const App = () => {
         <Route path="assistants" element={<Assistants />} />
         <Route path="appointments" element={<Appointments />} />
         <Route path="treatments" element={<Treatments />} />
+        <Route path="inventory" element={<Inventory />} />
       </Route>
     </Routes>
   );

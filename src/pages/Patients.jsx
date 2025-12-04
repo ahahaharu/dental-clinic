@@ -14,9 +14,9 @@ import {
 } from 'antd';
 import {
   PlusOutlined,
-  SearchOutlined,
   EditOutlined,
   DeleteOutlined,
+  FileTextOutlined,
 } from '@ant-design/icons';
 import dayjs from 'dayjs';
 
@@ -28,6 +28,10 @@ const Patients = () => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingPatient, setEditingPatient] = useState(null);
   const [form] = Form.useForm();
+
+  const [isRecordModalOpen, setIsRecordModalOpen] = useState(false);
+  const [selectedPatientId, setSelectedPatientId] = useState(null);
+  const [recordForm] = Form.useForm();
 
   const fetchPatients = async (query = '') => {
     setLoading(true);
@@ -73,7 +77,6 @@ const Patients = () => {
   const handleOk = async () => {
     try {
       const values = await form.validateFields();
-
       const formattedValues = {
         ...values,
         birth_date: values.birth_date
@@ -125,6 +128,53 @@ const Patients = () => {
     }
   };
 
+  const openRecordModal = async (patientId) => {
+    setSelectedPatientId(patientId);
+    recordForm.resetFields();
+    setIsRecordModalOpen(true);
+
+    try {
+      const response = await fetch(
+        `http://localhost:5000/api/patients/${patientId}/record`
+      );
+      if (response.ok) {
+        const data = await response.json();
+        if (data) {
+          recordForm.setFieldsValue({
+            diagnosis: data.diagnosis,
+            allergies: data.allergies,
+          });
+        }
+      }
+    } catch (error) {
+      message.error('Не удалось загрузить карту');
+    }
+  };
+
+  const handleRecordSave = async () => {
+    try {
+      const values = await recordForm.validateFields();
+
+      const response = await fetch(
+        `http://localhost:5000/api/patients/${selectedPatientId}/record`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(values),
+        }
+      );
+
+      if (response.ok) {
+        message.success('Медицинская карта сохранена');
+        setIsRecordModalOpen(false);
+      } else {
+        message.error('Ошибка при сохранении карты');
+      }
+    } catch (error) {
+      console.log('Record Save Failed:', error);
+    }
+  };
+
   const columns = [
     {
       title: 'Фамилия Имя',
@@ -164,7 +214,15 @@ const Patients = () => {
       title: 'Действия',
       key: 'action',
       render: (_, record) => (
-        <Space size="middle">
+        <Space size="small">
+          <Button
+            type="link"
+            icon={<FileTextOutlined />}
+            onClick={() => openRecordModal(record.id)}
+          >
+            Карта
+          </Button>
+
           <Button
             type="text"
             icon={<EditOutlined />}
@@ -275,6 +333,39 @@ const Patients = () => {
 
           <Form.Item name="Address" label="Адрес">
             <Input.TextArea rows={2} />
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      <Modal
+        title="Медицинская карта пациента"
+        open={isRecordModalOpen}
+        onOk={handleRecordSave}
+        onCancel={() => setIsRecordModalOpen(false)}
+        okText="Сохранить изменения"
+        cancelText="Закрыть"
+      >
+        <Form form={recordForm} layout="vertical" name="medical_record_form">
+          <Form.Item
+            name="diagnosis"
+            label="Диагноз / История болезни"
+            extra="Опишите текущие проблемы и историю лечения"
+          >
+            <Input.TextArea
+              rows={6}
+              placeholder="Например: Кариес 26 зуба..."
+            />
+          </Form.Item>
+
+          <Form.Item
+            name="allergies"
+            label="Аллергии и противопоказания"
+            extra="Важно для анестезии"
+          >
+            <Input.TextArea
+              rows={3}
+              placeholder="Например: Аллергия на лидокаин, пенициллин..."
+            />
           </Form.Item>
         </Form>
       </Modal>

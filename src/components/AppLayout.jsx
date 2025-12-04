@@ -8,6 +8,7 @@ import {
   TeamOutlined,
   SmileFilled,
   SmileOutlined,
+  InboxOutlined,
 } from '@ant-design/icons';
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
 
@@ -26,6 +27,7 @@ const AppLayout = () => {
     { key: '/assistants', icon: <SmileOutlined />, label: 'Ассистенты' },
     { key: '/appointments', icon: <CalendarOutlined />, label: 'Приёмы' },
     { key: '/treatments', icon: <MedicineBoxOutlined />, label: 'Лечение' },
+    { key: '/inventory', icon: <InboxOutlined />, label: 'Склад' },
   ];
 
   return (
