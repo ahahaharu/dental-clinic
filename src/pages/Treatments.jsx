@@ -30,22 +30,18 @@ const Treatments = () => {
   const [materialsList, setMaterialsList] = useState([]);
   const [equipmentList, setEquipmentList] = useState([]);
 
-  // Состояния загрузки
-  const [loading, setLoading] = useState(false); // Для таблицы
-  const [loadingDetails, setLoadingDetails] = useState(false); // Для модалки
+  const [loading, setLoading] = useState(false);
+  const [loadingDetails, setLoadingDetails] = useState(false);
 
-  // Модалка Редактирования/Создания
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingId, setEditingId] = useState(null);
 
-  // Модалка Просмотра
   const [isViewModalOpen, setIsViewModalOpen] = useState(false);
   const [viewData, setViewData] = useState(null);
 
   const [searchText, setSearchText] = useState('');
   const [form] = Form.useForm();
 
-  // --- 1. Загрузка данных ---
   const fetchTreatments = async (search = '') => {
     setLoading(true);
     try {
@@ -84,32 +80,28 @@ const Treatments = () => {
     fetchTreatments(value);
   };
 
-  // --- 2. Логика Редактирования/Создания ---
   const showEditModal = async (record = null) => {
     setEditingId(record ? record.id : null);
-    form.resetFields(); // <-- ВАЖНО: Сначала очищаем форму
+    form.resetFields();
     setIsModalOpen(true);
 
     if (record) {
-      setLoadingDetails(true); // Включаем спиннер
+      setLoadingDetails(true);
       try {
-        // Подгружаем полные данные (включая материалы и оборудование)
         const res = await fetch(
           `http://localhost:5000/api/treatments/${record.id}`
         );
         const data = await res.json();
 
-        // Устанавливаем значения в форму
         form.setFieldsValue({
           ...data,
-          // Если массив materials пустой или null, ставим []
           materials: data.materials || [],
           equipment: data.equipment || [],
         });
       } catch (e) {
         message.error('Не удалось загрузить детали');
       } finally {
-        setLoadingDetails(false); // Выключаем спиннер
+        setLoadingDetails(false);
       }
     }
   };
@@ -159,10 +151,9 @@ const Treatments = () => {
     }
   };
 
-  // --- 3. Логика Просмотра (View Details) ---
   const showViewModal = async (record) => {
     setIsViewModalOpen(true);
-    setViewData(null); // Сброс перед загрузкой
+    setViewData(null);
     setLoadingDetails(true);
     try {
       const res = await fetch(
@@ -177,13 +168,11 @@ const Treatments = () => {
     }
   };
 
-  // Вспомогательная функция для получения имени материала по ID
   const getMaterialName = (id) => {
     const m = materialsList.find((item) => item.id === id);
     return m ? m.name : 'Неизвестный материал';
   };
 
-  // Вспомогательная функция для получения имени оборудования по ID
   const getEquipmentName = (id) => {
     const e = equipmentList.find((item) => item.id === id);
     return e
@@ -222,14 +211,12 @@ const Treatments = () => {
       width: 150,
       render: (_, record) => (
         <Space>
-          {/* Кнопка ПРОСМОТРА */}
           <Button
             type="text"
             icon={<EyeOutlined />}
             onClick={() => showViewModal(record)}
             title="Просмотр деталей"
           />
-          {/* Кнопка РЕДАКТИРОВАНИЯ */}
           <Button
             type="text"
             icon={<EditOutlined />}
@@ -277,7 +264,6 @@ const Treatments = () => {
         pagination={{ pageSize: 8 }}
       />
 
-      {/* --- МОДАЛКА РЕДАКТИРОВАНИЯ/СОЗДАНИЯ --- */}
       <Modal
         title={editingId ? 'Редактирование услуги' : 'Новая услуга'}
         open={isModalOpen}
@@ -326,7 +312,6 @@ const Treatments = () => {
 
             <Divider orientation="left">Технологическая карта</Divider>
 
-            {/* МАТЕРИАЛЫ */}
             <p className="font-bold mb-2">Расходные материалы:</p>
             <Form.List name="materials">
               {(fields, { add, remove }) => (

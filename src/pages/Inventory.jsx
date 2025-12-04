@@ -301,7 +301,6 @@ const Inventory = () => {
         </Form>
       </Modal>
 
-      {/* Модалка Оборудования */}
       <Modal
         title={editingItem ? 'Ред. оборудование' : 'Новое оборудование'}
         open={isEquipModalOpen}

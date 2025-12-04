@@ -73,7 +73,6 @@ const Dentists = () => {
         message.success('Удалено');
         fetchDentists();
       } else {
-        // Скорее всего, нельзя удалить из-за foreign key
         message.error('Невозможно удалить: у врача есть записи');
       }
     } catch (e) {
@@ -101,7 +100,7 @@ const Dentists = () => {
     { title: 'Специализация', dataIndex: 'specialization', key: 'spec' },
     { title: 'Стаж (лет)', dataIndex: 'experience', key: 'exp' },
     { title: 'Лицензия', dataIndex: 'license_number', key: 'lic' },
-    { title: 'График', dataIndex: 'schedule', key: 'sch' }, // <-- Пункт 4 лабы: График работы
+    { title: 'График', dataIndex: 'schedule', key: 'sch' },
     {
       title: 'Действия',
       key: 'act',

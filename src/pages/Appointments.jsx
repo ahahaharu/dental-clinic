@@ -27,26 +27,22 @@ import {
 import dayjs from 'dayjs';
 
 const Appointments = () => {
-  // --- Состояния данных ---
   const [appointments, setAppointments] = useState([]);
   const [patients, setPatients] = useState([]);
   const [dentists, setDentists] = useState([]);
   const [rooms, setRooms] = useState([]);
-  const [treatmentsList, setTreatmentsList] = useState([]); // Прайс-лист услуг
+  const [treatmentsList, setTreatmentsList] = useState([]);
 
-  // --- Состояния модальных окон ---
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
   const [isCompleteModalOpen, setIsCompleteModalOpen] = useState(false);
 
-  // --- Выбранные элементы ---
   const [selectedAppointment, setSelectedAppointment] = useState(null);
-  const [appointmentDetails, setAppointmentDetails] = useState(null); // Детали (включая счет)
+  const [appointmentDetails, setAppointmentDetails] = useState(null);
 
   const [form] = Form.useForm();
   const [completeForm] = Form.useForm();
 
-  // 1. ЗАГРУЗКА ВСЕХ ДАННЫХ
   const fetchAllData = async () => {
     try {
       const [appRes, patRes, dentRes, roomRes, treatRes] = await Promise.all([
@@ -72,7 +68,6 @@ const Appointments = () => {
     fetchAllData();
   }, []);
 
-  // 2. ЗАГРУЗКА ДЕТАЛЕЙ ОДНОГО ПРИЕМА (включая услуги)
   const fetchDetails = async (id) => {
     try {
       const res = await fetch(`http://localhost:5000/api/appointments/${id}`);
@@ -85,7 +80,6 @@ const Appointments = () => {
     }
   };
 
-  // 3. СОЗДАНИЕ НОВОЙ ЗАПИСИ
   const handleCreate = async () => {
     try {
       const values = await form.validateFields();
@@ -113,26 +107,22 @@ const Appointments = () => {
     }
   };
 
-  // 4. ОТКРЫТИЕ ДЕТАЛЕЙ (Клик по календарю)
   const openDetails = (app) => {
     setSelectedAppointment(app);
-    setAppointmentDetails(null); // Сброс перед загрузкой
-    fetchDetails(app.id); // Загружаем свежие данные (с услугами)
+    setAppointmentDetails(null);
+    fetchDetails(app.id);
     setIsDetailModalOpen(true);
   };
 
-  // 5. ОТКРЫТИЕ ОКНА ЗАВЕРШЕНИЯ
   const openCompleteModal = () => {
-    setIsDetailModalOpen(false); // Закрываем детали
-    setIsCompleteModalOpen(true); // Открываем форму завершения
+    setIsDetailModalOpen(false);
+    setIsCompleteModalOpen(true);
     completeForm.resetFields();
   };
 
-  // 6. ЗАВЕРШЕНИЕ ПРИЕМА (Отправка услуг на сервер)
   const handleComplete = async () => {
     try {
       const values = await completeForm.validateFields();
-      // values.treatments - массив ID, например [1, 5]
 
       const res = await fetch(
         `http://localhost:5000/api/appointments/${selectedAppointment.id}`,
@@ -141,7 +131,7 @@ const Appointments = () => {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             status: 'completed',
-            treatments: values.treatments, // Отправляем список услуг
+            treatments: values.treatments,
           }),
         }
       );
@@ -149,7 +139,7 @@ const Appointments = () => {
       if (res.ok) {
         message.success('Прием завершен, услуги сохранены!');
         setIsCompleteModalOpen(false);
-        fetchAllData(); // Обновляем календарь
+        fetchAllData();
       } else {
         message.error('Ошибка сохранения');
       }
@@ -158,7 +148,6 @@ const Appointments = () => {
     }
   };
 
-  // 7. ПРОСТОЕ ОБНОВЛЕНИЕ СТАТУСА (Например, Отмена или Возврат)
   const updateStatus = async (status) => {
     if (!selectedAppointment) return;
     try {
@@ -167,7 +156,7 @@ const Appointments = () => {
         {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ status }), // Без treatments, просто статус
+          body: JSON.stringify({ status }),
         }
       );
 
@@ -181,7 +170,6 @@ const Appointments = () => {
     }
   };
 
-  // 8. ПОДСЧЕТ ИТОГОВОЙ СУММЫ
   const calculateTotal = () => {
     if (!appointmentDetails || !appointmentDetails.treatments) return 0;
     return appointmentDetails.treatments.reduce(
@@ -190,7 +178,6 @@ const Appointments = () => {
     );
   };
 
-  // 9. РЕНДЕР ЯЧЕЙКИ КАЛЕНДАРЯ
   const dateCellRender = (value) => {
     const dateString = value.format('YYYY-MM-DD');
     const list = appointments.filter(
@@ -230,7 +217,6 @@ const Appointments = () => {
 
   return (
     <div>
-      {/* ЗАГОЛОВОК И КНОПКА ДОБАВЛЕНИЯ */}
       <div className="flex justify-between items-center mb-4">
         <h2 className="text-2xl font-bold m-0">Журнал записи</h2>
         <Button
@@ -242,12 +228,10 @@ const Appointments = () => {
         </Button>
       </div>
 
-      {/* КАЛЕНДАРЬ */}
       <Card>
         <Calendar dateCellRender={dateCellRender} />
       </Card>
 
-      {/* МОДАЛКА 1: СОЗДАНИЕ ЗАПИСИ */}
       <Modal
         title="Новая запись"
         open={isAddModalOpen}
@@ -318,7 +302,6 @@ const Appointments = () => {
         </Form>
       </Modal>
 
-      {/* МОДАЛКА 2: ЗАВЕРШЕНИЕ ПРИЕМА (ВЫБОР УСЛУГ) */}
       <Modal
         title="Завершение приема"
         open={isCompleteModalOpen}
@@ -359,7 +342,6 @@ const Appointments = () => {
         </Form>
       </Modal>
 
-      {/* МОДАЛКА 3: ДЕТАЛИ И ПРОСМОТР СЧЕТА */}
       <Modal
         title="Карточка приема"
         open={isDetailModalOpen}
@@ -369,7 +351,6 @@ const Appointments = () => {
       >
         {selectedAppointment && (
           <div>
-            {/* Шапка карточки */}
             <div className="flex justify-between items-start mb-4">
               <div>
                 <Typography.Title level={4} style={{ margin: 0 }}>
@@ -395,7 +376,6 @@ const Appointments = () => {
 
             <Divider style={{ margin: '12px 0' }} />
 
-            {/* Инфо о враче и времени */}
             <div className="grid grid-cols-2 gap-4 mb-4">
               <div>
                 <p className="mb-1 text-gray-500">

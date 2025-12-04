@@ -9,11 +9,6 @@ const PORT = process.env.PORT || 5000;
 app.use(cors());
 app.use(express.json());
 
-// ============================================
-// 1. ПАЦИЕНТЫ (Patients)
-// ============================================
-
-// Получить всех пациентов (с поиском)
 app.get('/api/patients', async (req, res) => {
   const { search } = req.query;
   try {
@@ -35,7 +30,6 @@ app.get('/api/patients', async (req, res) => {
   }
 });
 
-// Добавить пациента
 app.post('/api/patients', async (req, res) => {
   const {
     first_name,
@@ -58,7 +52,6 @@ app.post('/api/patients', async (req, res) => {
   }
 });
 
-// Обновить пациента
 app.put('/api/patients/:id', async (req, res) => {
   const { id } = req.params;
   const {
@@ -91,7 +84,6 @@ app.put('/api/patients/:id', async (req, res) => {
   }
 });
 
-// Удалить пациента
 app.delete('/api/patients/:id', async (req, res) => {
   try {
     await db.query('DELETE FROM Patient WHERE id = ?', [req.params.id]);
@@ -101,7 +93,6 @@ app.delete('/api/patients/:id', async (req, res) => {
   }
 });
 
-// Получить медкарту пациента
 app.get('/api/patients/:id/record', async (req, res) => {
   try {
     const [rows] = await db.query(
@@ -114,7 +105,6 @@ app.get('/api/patients/:id/record', async (req, res) => {
   }
 });
 
-// Создать/Обновить медкарту
 app.post('/api/patients/:id/record', async (req, res) => {
   const { id } = req.params;
   const { diagnosis, allergies } = req.body;
@@ -143,11 +133,6 @@ app.post('/api/patients/:id/record', async (req, res) => {
   }
 });
 
-// ============================================
-// 2. ВРАЧИ И АССИСТЕНТЫ (Staff)
-// ============================================
-
-// --- СТОМАТОЛОГИ ---
 app.get('/api/dentists', async (req, res) => {
   const { search } = req.query;
   try {
@@ -231,7 +216,6 @@ app.delete('/api/dentists/:id', async (req, res) => {
   }
 });
 
-// --- АССИСТЕНТЫ ---
 app.get('/api/assistants', async (req, res) => {
   try {
     const [rows] = await db.query('SELECT * FROM Assistant');
@@ -277,11 +261,6 @@ app.delete('/api/assistants/:id', async (req, res) => {
   }
 });
 
-// ============================================
-// 3. СКЛАД (Inventory)
-// ============================================
-
-// --- МАТЕРИАЛЫ ---
 app.get('/api/materials', async (req, res) => {
   try {
     const [rows] = await db.query(
@@ -329,7 +308,6 @@ app.delete('/api/materials/:id', async (req, res) => {
   }
 });
 
-// --- ОБОРУДОВАНИЕ ---
 app.get('/api/equipment', async (req, res) => {
   try {
     const query = `
@@ -384,7 +362,6 @@ app.delete('/api/equipment/:id', async (req, res) => {
   }
 });
 
-// --- КАБИНЕТЫ ---
 app.get('/api/rooms', async (req, res) => {
   try {
     const [rows] = await db.query('SELECT * FROM Room');
@@ -394,11 +371,6 @@ app.get('/api/rooms', async (req, res) => {
   }
 });
 
-// ============================================
-// 4. УСЛУГИ (Treatments)
-// ============================================
-
-// Получить все услуги
 app.get('/api/treatments', async (req, res) => {
   const { search } = req.query;
   try {
@@ -416,12 +388,10 @@ app.get('/api/treatments', async (req, res) => {
   }
 });
 
-// Получить ОДНУ услугу (ДЕТАЛИ) - ВОТ ЭТОТ МАРШРУТ ВАЖЕН ДЛЯ 404 ОШИБКИ
 app.get('/api/treatments/:id', async (req, res) => {
   try {
     const { id } = req.params;
 
-    // 1. Сама услуга
     const [tRows] = await db.query('SELECT * FROM Treatment WHERE id = ?', [
       id,
     ]);
@@ -431,19 +401,16 @@ app.get('/api/treatments/:id', async (req, res) => {
     }
     const treatment = tRows[0];
 
-    // 2. Материалы
     const [mRows] = await db.query(
       `SELECT material_id, quantity_needed FROM Treatment_Material WHERE treatment_id = ?`,
       [id]
     );
 
-    // 3. Оборудование
     const [eRows] = await db.query(
       `SELECT equipment_id FROM Treatment_Equipment WHERE treatment_id = ?`,
       [id]
     );
 
-    // Форматируем ответ
     treatment.materials = mRows.map((m) => ({
       id: m.material_id,
       quantity: m.quantity_needed,
@@ -457,7 +424,6 @@ app.get('/api/treatments/:id', async (req, res) => {
   }
 });
 
-// Создать услугу
 app.post('/api/treatments', async (req, res) => {
   const { name, description, duration, cost, materials, equipment } = req.body;
   const connection = await db.getConnection();
@@ -497,7 +463,6 @@ app.post('/api/treatments', async (req, res) => {
   }
 });
 
-// Обновить услугу
 app.put('/api/treatments/:id', async (req, res) => {
   const { id } = req.params;
   const { name, description, duration, cost, materials, equipment } = req.body;
@@ -511,7 +476,6 @@ app.put('/api/treatments/:id', async (req, res) => {
       [name, description, duration, cost, id]
     );
 
-    // Обновляем материалы (удалить старые -> добавить новые)
     await connection.query(
       'DELETE FROM Treatment_Material WHERE treatment_id = ?',
       [id]
@@ -524,7 +488,6 @@ app.put('/api/treatments/:id', async (req, res) => {
       );
     }
 
-    // Обновляем оборудование
     await connection.query(
       'DELETE FROM Treatment_Equipment WHERE treatment_id = ?',
       [id]
@@ -547,7 +510,6 @@ app.put('/api/treatments/:id', async (req, res) => {
   }
 });
 
-// Удалить услугу
 app.delete('/api/treatments/:id', async (req, res) => {
   try {
     await db.query('DELETE FROM Treatment WHERE id = ?', [req.params.id]);
@@ -563,11 +525,6 @@ app.delete('/api/treatments/:id', async (req, res) => {
   }
 });
 
-// ============================================
-// 5. ПРИЕМЫ (Appointments)
-// ============================================
-
-// Получить все приемы (с именами и номером кабинета)
 app.get('/api/appointments', async (req, res) => {
   try {
     const query = `
@@ -588,12 +545,10 @@ app.get('/api/appointments', async (req, res) => {
   }
 });
 
-// Получить детали одного приема
 app.get('/api/appointments/:id', async (req, res) => {
   try {
     const { id } = req.params;
 
-    // Сам прием
     const [appointmentRows] = await db.query(
       `SELECT a.*, 
               p.last_name as p_last, p.first_name as p_first,
@@ -609,7 +564,6 @@ app.get('/api/appointments/:id', async (req, res) => {
       return res.status(404).json({ message: 'Прием не найден' });
     }
 
-    // Оказанные услуги
     const [treatmentRows] = await db.query(
       `SELECT t.id, t.name, t.cost, at.quantity
        FROM Appointment_Treatment at
@@ -624,7 +578,6 @@ app.get('/api/appointments/:id', async (req, res) => {
   }
 });
 
-// Создать прием
 app.post('/api/appointments', async (req, res) => {
   const { date_time, patient_id, dentist_id, assistant_id, room_id } = req.body;
   try {
@@ -677,26 +630,18 @@ app.put('/api/appointments/:id', async (req, res) => {
   }
 });
 
-// ============================================
-// 6. ДАШБОРД / СТАТИСТИКА
-// ============================================
-
 app.get('/api/dashboard/stats', async (req, res) => {
   try {
     const connection = await db.getConnection();
 
-    // 1. Количество пациентов
     const [patients] = await connection.query(
       'SELECT COUNT(*) as count FROM Patient'
     );
 
-    // 2. Приемы на СЕГОДНЯ
     const [appointmentsToday] = await connection.query(
       'SELECT COUNT(*) as count FROM Appointment WHERE DATE(date_time) = CURDATE()'
     );
 
-    // 3. Выручка за текущий МЕСЯЦ (считаем только completed приемы)
-    // Суммируем (цена услуги * количество) из таблицы связки
     const [revenue] = await connection.query(`
       SELECT SUM(t.cost * at.quantity) as total 
       FROM Appointment a
@@ -707,7 +652,6 @@ app.get('/api/dashboard/stats', async (req, res) => {
         AND YEAR(a.date_time) = YEAR(CURRENT_DATE())
     `);
 
-    // 4. Самая популярная услуга (Топ-1)
     const [topTreatment] = await connection.query(`
       SELECT t.name, COUNT(at.treatment_id) as usage_count 
       FROM Appointment_Treatment at
@@ -717,7 +661,6 @@ app.get('/api/dashboard/stats', async (req, res) => {
       LIMIT 1
     `);
 
-    // 5. Материалы, которые заканчиваются (меньше 10 шт)
     const [lowStock] = await connection.query(
       'SELECT COUNT(*) as count FROM Material WHERE quantity < 10'
     );
@@ -727,7 +670,7 @@ app.get('/api/dashboard/stats', async (req, res) => {
     res.json({
       patientsCount: patients[0].count,
       appointmentsToday: appointmentsToday[0].count,
-      monthlyRevenue: revenue[0].total || 0, // Если null, то 0
+      monthlyRevenue: revenue[0].total || 0,
       topTreatment: topTreatment[0] ? topTreatment[0].name : 'Нет данных',
       lowStockCount: lowStock[0].count,
     });
