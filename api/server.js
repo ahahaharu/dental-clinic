@@ -2,12 +2,93 @@ import express from 'express';
 import cors from 'cors';
 import 'dotenv/config';
 import db from './db.js';
+import redisClient from './redis.js';
+import bcrypt from 'bcrypt';
+import jwt from 'jsonwebtoken';
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 
 app.use(cors());
 app.use(express.json());
+
+app.post('/api/login', async (req, res) => {
+  const { username, password } = req.body;
+
+  try {
+    const isBlocked = await redisClient.get(`blacklist:${username}`);
+    if (isBlocked) {
+      const ttl = await redisClient.ttl(`blacklist:${username}`);
+      const minutesLeft = Math.ceil(ttl / 60);
+      return res.status(403).json({
+        message: `Превышено количество попыток. Пользователь заблокирован. Попробуйте через ${minutesLeft} мин.`,
+      });
+    }
+
+    const [users] = await db.query('SELECT * FROM User WHERE username = ?', [
+      username,
+    ]);
+    if (users.length === 0) {
+      return res
+        .status(401)
+        .json({ message: 'Неверное имя пользователя или пароль' });
+    }
+    const user = users[0];
+
+    const isMatch = await bcrypt.compare(password, user.password_hash);
+
+    if (!isMatch) {
+      const attemptsKey = `attempts:${username}`;
+      const attempts = await redisClient.incr(attemptsKey);
+
+      if (attempts === 1) {
+        await redisClient.expire(attemptsKey, 600);
+      }
+
+      if (attempts >= 3) {
+        await redisClient.setEx(`blacklist:${username}`, 600, 'blocked');
+        await redisClient.del(attemptsKey);
+        return res.status(403).json({
+          message:
+            'Вы ввели неверный пароль 3 раза. Учетная запись заблокирована на 10 минут.',
+        });
+      }
+
+      return res.status(401).json({
+        message: `Неверное имя пользователя или пароль. Осталось попыток: ${
+          3 - attempts
+        }`,
+      });
+    }
+
+    // 4. Пароль верный: очищаем счетчик ошибок (если были)
+    await redisClient.del(`attempts:${username}`);
+
+    // 5. Генерируем JWT токен
+    const token = jwt.sign(
+      {
+        id: user.id,
+        username: user.username,
+        role: user.role,
+        dentist_id: user.dentist_id,
+        assistant_id: user.assistant_id,
+      },
+      process.env.JWT_SECRET,
+      { expiresIn: '8h' }
+    );
+
+    res.json({
+      token,
+      user: {
+        username: user.username,
+        role: user.role,
+      },
+    });
+  } catch (error) {
+    console.error('Ошибка при авторизации:', error);
+    res.status(500).json({ error: 'Внутренняя ошибка сервера' });
+  }
+});
 
 app.get('/api/patients', async (req, res) => {
   const { search } = req.query;
@@ -676,6 +757,21 @@ app.get('/api/dashboard/stats', async (req, res) => {
     });
   } catch (error) {
     console.error(error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/logs', async (req, res) => {
+  try {
+    const query = `
+      SELECT * FROM AuditLog 
+      ORDER BY action_time DESC 
+      LIMIT 100
+    `;
+    const [rows] = await db.query(query);
+    res.json(rows);
+  } catch (error) {
+    console.error('Ошибка получения логов:', error);
     res.status(500).json({ error: error.message });
   }
 });
