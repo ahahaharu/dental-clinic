@@ -25,6 +25,7 @@ import {
   RollbackOutlined,
 } from '@ant-design/icons';
 import dayjs from 'dayjs';
+import { apiFetch } from '../utils/api';
 
 const Appointments = () => {
   const [appointments, setAppointments] = useState([]);
@@ -46,11 +47,11 @@ const Appointments = () => {
   const fetchAllData = async () => {
     try {
       const [appRes, patRes, dentRes, roomRes, treatRes] = await Promise.all([
-        fetch('http://localhost:5000/api/appointments'),
-        fetch('http://localhost:5000/api/patients'),
-        fetch('http://localhost:5000/api/dentists'),
-        fetch('http://localhost:5000/api/rooms'),
-        fetch('http://localhost:5000/api/treatments'),
+        apiFetch('/api/appointments'),
+        apiFetch('/api/patients'),
+        apiFetch('/api/dentists'),
+        apiFetch('/api/rooms'),
+        apiFetch('/api/treatments'),
       ]);
 
       if (appRes.ok) setAppointments(await appRes.json());
@@ -70,7 +71,7 @@ const Appointments = () => {
 
   const fetchDetails = async (id) => {
     try {
-      const res = await fetch(`http://localhost:5000/api/appointments/${id}`);
+      const res = await apiFetch(`/api/appointments/${id}`);
       if (res.ok) {
         const data = await res.json();
         setAppointmentDetails(data);
@@ -88,9 +89,8 @@ const Appointments = () => {
         date_time: values.date_time.format('YYYY-MM-DD HH:mm:ss'),
       };
 
-      const res = await fetch('http://localhost:5000/api/appointments', {
+      const res = await apiFetch('/api/appointments', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(formattedValues),
       });
 
@@ -124,11 +124,10 @@ const Appointments = () => {
     try {
       const values = await completeForm.validateFields();
 
-      const res = await fetch(
-        `http://localhost:5000/api/appointments/${selectedAppointment.id}`,
+      const res = await apiFetch(
+        `/api/appointments/${selectedAppointment.id}`,
         {
           method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             status: 'completed',
             treatments: values.treatments,
@@ -151,11 +150,10 @@ const Appointments = () => {
   const updateStatus = async (status) => {
     if (!selectedAppointment) return;
     try {
-      const res = await fetch(
-        `http://localhost:5000/api/appointments/${selectedAppointment.id}`,
+      const res = await apiFetch(
+        `/api/appointments/${selectedAppointment.id}`,
         {
           method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ status }),
         }
       );

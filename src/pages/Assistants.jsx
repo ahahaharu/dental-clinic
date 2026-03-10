@@ -11,6 +11,7 @@ import {
   InputNumber,
 } from 'antd';
 import { PlusOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons';
+import { apiFetch } from '../utils/api';
 
 const Assistants = () => {
   const [assistants, setAssistants] = useState([]);
@@ -22,7 +23,7 @@ const Assistants = () => {
   const fetchAssistants = async () => {
     setLoading(true);
     try {
-      const res = await fetch('http://localhost:5000/api/assistants');
+      const res = await apiFetch('/api/assistants');
       const data = await res.json();
       setAssistants(data);
     } catch (error) {
@@ -40,13 +41,12 @@ const Assistants = () => {
     try {
       const values = await form.validateFields();
       const url = editingAssistant
-        ? `http://localhost:5000/api/assistants/${editingAssistant.id}`
-        : 'http://localhost:5000/api/assistants';
+        ? `/api/assistants/${editingAssistant.id}`
+        : '/api/assistants';
       const method = editingAssistant ? 'PUT' : 'POST';
 
-      const res = await fetch(url, {
+      const res = await apiFetch(url, {
         method,
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(values),
       });
 
@@ -64,7 +64,7 @@ const Assistants = () => {
 
   const handleDelete = async (id) => {
     try {
-      const res = await fetch(`http://localhost:5000/api/assistants/${id}`, {
+      const res = await apiFetch(`/api/assistants/${id}`, {
         method: 'DELETE',
       });
       if (res.ok) {

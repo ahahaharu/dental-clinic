@@ -11,6 +11,8 @@ import {
   InputNumber,
 } from 'antd';
 import { PlusOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons';
+import { apiFetch } from '../utils/api';
+import toast from 'react-hot-toast';
 
 const Dentists = () => {
   const [dentists, setDentists] = useState([]);
@@ -22,13 +24,11 @@ const Dentists = () => {
   const fetchDentists = async (search = '') => {
     setLoading(true);
     try {
-      const res = await fetch(
-        `http://localhost:5000/api/dentists?search=${search}`
-      );
+      const res = await apiFetch(`/api/dentists?search=${search}`);
       const data = await res.json();
       setDentists(data);
     } catch (error) {
-      message.error('Ошибка загрузки');
+      toast.error('Ошибка загрузки врачей');
     } finally {
       setLoading(false);
     }
@@ -39,44 +39,57 @@ const Dentists = () => {
   }, []);
 
   const handleOk = async () => {
+    const loadingToast = toast.loading('Сохранение...');
     try {
       const values = await form.validateFields();
       const url = editingDentist
-        ? `http://localhost:5000/api/dentists/${editingDentist.id}`
-        : 'http://localhost:5000/api/dentists';
+        ? `/api/dentists/${editingDentist.id}`
+        : '/api/dentists';
       const method = editingDentist ? 'PUT' : 'POST';
 
-      const res = await fetch(url, {
+      const res = await apiFetch(url, {
         method,
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(values),
       });
 
       if (res.ok) {
-        message.success('Успешно сохранено');
+        toast.success('Данные успешно сохранены!', { id: loadingToast });
         setIsModalOpen(false);
         fetchDentists();
       } else {
-        message.error('Ошибка сохранения');
+        const data = await res.json();
+        toast.error(data.error || 'Ошибка сохранения', { id: loadingToast });
       }
     } catch (err) {
+      toast.dismiss(loadingToast);
       console.log(err);
     }
   };
 
   const handleDelete = async (id) => {
+    const deletingToast = toast.loading('Удаление...');
     try {
-      const res = await fetch(`http://localhost:5000/api/dentists/${id}`, {
+      const res = await apiFetch(`/api/dentists/${id}`, {
         method: 'DELETE',
       });
+
+      let data = {};
+      const contentType = res.headers.get('content-type');
+      if (contentType && contentType.includes('application/json')) {
+        data = await res.json();
+      }
+
       if (res.ok) {
-        message.success('Удалено');
+        toast.success('Врач удален', { id: deletingToast });
         fetchDentists();
       } else {
-        message.error('Невозможно удалить: у врача есть записи');
+        toast.error(data.error || 'Нельзя удалить: этот врач занят в приемах', {
+          id: deletingToast,
+          duration: 4000,
+        });
       }
     } catch (e) {
-      message.error('Ошибка сети');
+      toast.error('Ошибка соединения с сервером', { id: deletingToast });
     }
   };
 

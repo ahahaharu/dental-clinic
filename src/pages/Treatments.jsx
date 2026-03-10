@@ -23,22 +23,18 @@ import {
   MinusCircleOutlined,
   EyeOutlined,
 } from '@ant-design/icons';
+import { apiFetch } from '../utils/api';
 
 const Treatments = () => {
   const [treatments, setTreatments] = useState([]);
-
   const [materialsList, setMaterialsList] = useState([]);
   const [equipmentList, setEquipmentList] = useState([]);
-
   const [loading, setLoading] = useState(false);
   const [loadingDetails, setLoadingDetails] = useState(false);
-
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingId, setEditingId] = useState(null);
-
   const [isViewModalOpen, setIsViewModalOpen] = useState(false);
   const [viewData, setViewData] = useState(null);
-
   const [searchText, setSearchText] = useState('');
   const [form] = Form.useForm();
 
@@ -46,9 +42,9 @@ const Treatments = () => {
     setLoading(true);
     try {
       const url = search
-        ? `http://localhost:5000/api/treatments?search=${search}`
-        : 'http://localhost:5000/api/treatments';
-      const res = await fetch(url);
+        ? `/api/treatments?search=${search}`
+        : '/api/treatments';
+      const res = await apiFetch(url);
       setTreatments(await res.json());
     } catch (error) {
       message.error('Ошибка загрузки прайс-листа');
@@ -60,8 +56,8 @@ const Treatments = () => {
   const fetchResources = async () => {
     try {
       const [matRes, eqRes] = await Promise.all([
-        fetch('http://localhost:5000/api/materials'),
-        fetch('http://localhost:5000/api/equipment'),
+        apiFetch('/api/materials'),
+        apiFetch('/api/equipment'),
       ]);
       setMaterialsList(await matRes.json());
       setEquipmentList(await eqRes.json());
@@ -88,11 +84,8 @@ const Treatments = () => {
     if (record) {
       setLoadingDetails(true);
       try {
-        const res = await fetch(
-          `http://localhost:5000/api/treatments/${record.id}`
-        );
+        const res = await apiFetch(`/api/treatments/${record.id}`);
         const data = await res.json();
-
         form.setFieldsValue({
           ...data,
           materials: data.materials || [],
@@ -110,13 +103,12 @@ const Treatments = () => {
     try {
       const values = await form.validateFields();
       const url = editingId
-        ? `http://localhost:5000/api/treatments/${editingId}`
-        : 'http://localhost:5000/api/treatments';
+        ? `/api/treatments/${editingId}`
+        : '/api/treatments';
       const method = editingId ? 'PUT' : 'POST';
 
-      const res = await fetch(url, {
+      const res = await apiFetch(url, {
         method,
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(values),
       });
 
@@ -136,9 +128,7 @@ const Treatments = () => {
 
   const handleDelete = async (id) => {
     try {
-      const res = await fetch(`http://localhost:5000/api/treatments/${id}`, {
-        method: 'DELETE',
-      });
+      const res = await apiFetch(`/api/treatments/${id}`, { method: 'DELETE' });
       if (res.ok) {
         message.success('Услуга удалена');
         fetchTreatments(searchText);
@@ -156,9 +146,7 @@ const Treatments = () => {
     setViewData(null);
     setLoadingDetails(true);
     try {
-      const res = await fetch(
-        `http://localhost:5000/api/treatments/${record.id}`
-      );
+      const res = await apiFetch(`/api/treatments/${record.id}`);
       const data = await res.json();
       setViewData(data);
     } catch (error) {
@@ -287,7 +275,6 @@ const Treatments = () => {
                 <Input placeholder="Краткое описание" />
               </Form.Item>
             </div>
-
             <div className="grid grid-cols-2 gap-4">
               <Form.Item
                 name="duration"
@@ -309,9 +296,7 @@ const Treatments = () => {
                 />
               </Form.Item>
             </div>
-
             <Divider orientation="left">Технологическая карта</Divider>
-
             <p className="font-bold mb-2">Расходные материалы:</p>
             <Form.List name="materials">
               {(fields, { add, remove }) => (
@@ -361,7 +346,6 @@ const Treatments = () => {
                 </>
               )}
             </Form.List>
-
             <Form.Item name="equipment" label="Необходимое оборудование">
               <Select mode="multiple" placeholder="Выберите оборудование">
                 {equipmentList.map((e) => (
@@ -405,7 +389,6 @@ const Treatments = () => {
                   {Number(viewData.cost).toFixed(2)} BYN
                 </Descriptions.Item>
               </Descriptions>
-
               <Divider orientation="left" style={{ fontSize: '14px' }}>
                 Расходные материалы
               </Divider>
@@ -426,7 +409,6 @@ const Treatments = () => {
               ) : (
                 <p className="text-gray-500 italic">Материалы не требуются</p>
               )}
-
               <Divider orientation="left" style={{ fontSize: '14px' }}>
                 Оборудование
               </Divider>

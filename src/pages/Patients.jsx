@@ -19,6 +19,7 @@ import {
   FileTextOutlined,
 } from '@ant-design/icons';
 import dayjs from 'dayjs';
+import { apiFetch } from '../utils/api';
 
 const Patients = () => {
   const [patients, setPatients] = useState([]);
@@ -36,11 +37,8 @@ const Patients = () => {
   const fetchPatients = async (query = '') => {
     setLoading(true);
     try {
-      const url = query
-        ? `http://localhost:5000/api/patients?search=${query}`
-        : 'http://localhost:5000/api/patients';
-
-      const response = await fetch(url);
+      const url = query ? `/api/patients?search=${query}` : '/api/patients';
+      const response = await apiFetch(url);
       const data = await response.json();
       setPatients(data);
     } catch (error) {
@@ -83,18 +81,13 @@ const Patients = () => {
           ? values.birth_date.format('YYYY-MM-DD')
           : null,
       };
+      const url = editingPatient
+        ? `/api/patients/${editingPatient.id}`
+        : '/api/patients';
+      const method = editingPatient ? 'PUT' : 'POST';
 
-      let url = 'http://localhost:5000/api/patients';
-      let method = 'POST';
-
-      if (editingPatient) {
-        url = `http://localhost:5000/api/patients/${editingPatient.id}`;
-        method = 'PUT';
-      }
-
-      const response = await fetch(url, {
+      const response = await apiFetch(url, {
         method: method,
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(formattedValues),
       });
 
@@ -114,7 +107,7 @@ const Patients = () => {
 
   const handleDelete = async (id) => {
     try {
-      const response = await fetch(`http://localhost:5000/api/patients/${id}`, {
+      const response = await apiFetch(`/api/patients/${id}`, {
         method: 'DELETE',
       });
       if (response.ok) {
@@ -134,17 +127,14 @@ const Patients = () => {
     setIsRecordModalOpen(true);
 
     try {
-      const response = await fetch(
-        `http://localhost:5000/api/patients/${patientId}/record`
-      );
+      const response = await apiFetch(`/api/patients/${patientId}/record`);
       if (response.ok) {
         const data = await response.json();
-        if (data) {
+        if (data)
           recordForm.setFieldsValue({
             diagnosis: data.diagnosis,
             allergies: data.allergies,
           });
-        }
       }
     } catch (error) {
       message.error('Не удалось загрузить карту');
@@ -154,12 +144,10 @@ const Patients = () => {
   const handleRecordSave = async () => {
     try {
       const values = await recordForm.validateFields();
-
-      const response = await fetch(
-        `http://localhost:5000/api/patients/${selectedPatientId}/record`,
+      const response = await apiFetch(
+        `/api/patients/${selectedPatientId}/record`,
         {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(values),
         }
       );
@@ -185,11 +173,7 @@ const Patients = () => {
         </b>
       ),
     },
-    {
-      title: 'Телефон',
-      dataIndex: 'phone_number',
-      key: 'phone_number',
-    },
+    { title: 'Телефон', dataIndex: 'phone_number', key: 'phone_number' },
     {
       title: 'Пол',
       dataIndex: 'gender',
@@ -222,7 +206,6 @@ const Patients = () => {
           >
             Карта
           </Button>
-
           <Button
             type="text"
             icon={<EditOutlined />}
@@ -246,7 +229,6 @@ const Patients = () => {
     <div>
       <div className="flex justify-between items-center mb-4 gap-4">
         <h2 className="text-2xl font-bold m-0">Пациенты</h2>
-
         <Input.Search
           placeholder="Поиск по имени или телефону"
           allowClear
@@ -254,7 +236,6 @@ const Patients = () => {
           onSearch={onSearch}
           style={{ width: 300 }}
         />
-
         <Button type="primary" icon={<PlusOutlined />} onClick={showAddModal}>
           Новый пациент
         </Button>
@@ -293,7 +274,6 @@ const Patients = () => {
               <Input />
             </Form.Item>
           </div>
-
           <div className="grid grid-cols-2 gap-4">
             <Form.Item
               name="phone_number"
@@ -310,7 +290,6 @@ const Patients = () => {
               <DatePicker style={{ width: '100%' }} format="YYYY-MM-DD" />
             </Form.Item>
           </div>
-
           <Form.Item
             name="gender"
             label="Пол"
@@ -322,7 +301,6 @@ const Patients = () => {
               <Select.Option value="O">Другой</Select.Option>
             </Select>
           </Form.Item>
-
           <Form.Item
             name="email"
             label="Email"
@@ -330,7 +308,6 @@ const Patients = () => {
           >
             <Input />
           </Form.Item>
-
           <Form.Item name="Address" label="Адрес">
             <Input.TextArea rows={2} />
           </Form.Item>
@@ -356,7 +333,6 @@ const Patients = () => {
               placeholder="Например: Кариес 26 зуба..."
             />
           </Form.Item>
-
           <Form.Item
             name="allergies"
             label="Аллергии и противопоказания"

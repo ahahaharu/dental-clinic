@@ -8,6 +8,7 @@ import {
   AlertOutlined,
   MedicineBoxOutlined,
 } from '@ant-design/icons';
+import { apiFetch } from '../utils/api';
 
 const Dashboard = () => {
   const [stats, setStats] = useState(null);
@@ -19,7 +20,7 @@ const Dashboard = () => {
 
   const fetchStats = async () => {
     try {
-      const res = await fetch('http://localhost:5000/api/dashboard/stats');
+      const res = await apiFetch('/api/dashboard/stats');
       if (res.ok) {
         const data = await res.json();
         setStats(data);
@@ -60,7 +61,6 @@ const Dashboard = () => {
             />
           </Card>
         </Col>
-
         <Col xs={24} sm={12} lg={8}>
           <Card
             bordered={false}
@@ -74,7 +74,6 @@ const Dashboard = () => {
             />
           </Card>
         </Col>
-
         <Col xs={24} sm={12} lg={8}>
           <Card
             bordered={false}
@@ -106,7 +105,6 @@ const Dashboard = () => {
             </div>
           </Card>
         </Col>
-
         <Col xs={24} sm={12} lg={12}>
           <Card
             bordered={false}

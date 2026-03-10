@@ -16,6 +16,7 @@ import {
 } from 'antd';
 import { PlusOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
+import { apiFetch } from '../utils/api';
 
 const Inventory = () => {
   const [materials, setMaterials] = useState([]);
@@ -25,7 +26,6 @@ const Inventory = () => {
 
   const [isMatModalOpen, setIsMatModalOpen] = useState(false);
   const [isEquipModalOpen, setIsEquipModalOpen] = useState(false);
-
   const [editingItem, setEditingItem] = useState(null);
   const [form] = Form.useForm();
 
@@ -33,9 +33,9 @@ const Inventory = () => {
     setLoading(true);
     try {
       const [matRes, equipRes, roomRes] = await Promise.all([
-        fetch('http://localhost:5000/api/materials'),
-        fetch('http://localhost:5000/api/equipment'),
-        fetch('http://localhost:5000/api/rooms'),
+        apiFetch('/api/materials'),
+        apiFetch('/api/equipment'),
+        apiFetch('/api/rooms'),
       ]);
       setMaterials(await matRes.json());
       setEquipment(await equipRes.json());
@@ -75,15 +75,13 @@ const Inventory = () => {
           ? values.expiration_date.format('YYYY-MM-DD')
           : null,
       };
-
       const url = editingItem
-        ? `http://localhost:5000/api/materials/${editingItem.id}`
-        : 'http://localhost:5000/api/materials';
+        ? `/api/materials/${editingItem.id}`
+        : '/api/materials';
       const method = editingItem ? 'PUT' : 'POST';
 
-      await fetch(url, {
+      await apiFetch(url, {
         method,
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(formattedValues),
       });
       message.success('Сохранено');
@@ -95,9 +93,7 @@ const Inventory = () => {
   };
 
   const deleteMaterial = async (id) => {
-    await fetch(`http://localhost:5000/api/materials/${id}`, {
-      method: 'DELETE',
-    });
+    await apiFetch(`/api/materials/${id}`, { method: 'DELETE' });
     message.success('Удалено');
     fetchData();
   };
@@ -126,15 +122,13 @@ const Inventory = () => {
           ? values.date_of_purchase.format('YYYY-MM-DD')
           : null,
       };
-
       const url = editingItem
-        ? `http://localhost:5000/api/equipment/${editingItem.id}`
-        : 'http://localhost:5000/api/equipment';
+        ? `/api/equipment/${editingItem.id}`
+        : '/api/equipment';
       const method = editingItem ? 'PUT' : 'POST';
 
-      const res = await fetch(url, {
+      const res = await apiFetch(url, {
         method,
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(formattedValues),
       });
 
@@ -152,9 +146,7 @@ const Inventory = () => {
 
   const deleteEquipment = async (id) => {
     try {
-      const res = await fetch(`http://localhost:5000/api/equipment/${id}`, {
-        method: 'DELETE',
-      });
+      const res = await apiFetch(`/api/equipment/${id}`, { method: 'DELETE' });
       if (res.ok) {
         message.success('Оборудование удалено');
         fetchData();
@@ -273,7 +265,6 @@ const Inventory = () => {
       <h2 className="text-2xl font-bold mb-4">Склад</h2>
       <Tabs defaultActiveKey="1" items={items} />
 
-      {/* Модалка Материалов */}
       <Modal
         title={editingItem ? 'Ред. материал' : 'Новый материал'}
         open={isMatModalOpen}

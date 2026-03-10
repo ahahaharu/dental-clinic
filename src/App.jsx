@@ -12,10 +12,12 @@ import Assistants from './pages/Assistants';
 import Inventory from './pages/Inventory';
 import Treatments from './pages/Treatments';
 import SystemLogs from './pages/SystemLogs';
+import { Toaster } from 'react-hot-toast';
 
 const App = () => {
   return (
     <AuthProvider>
+      <Toaster position="top-right" reverseOrder={false} />
       <Routes>
         <Route path="/login" element={<Login />} />
 

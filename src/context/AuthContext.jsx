@@ -21,7 +21,25 @@ export const AuthProvider = ({ children }) => {
     localStorage.setItem('token', token);
   };
 
-  const logout = () => {
+  const logout = async () => {
+    const token = localStorage.getItem('token');
+    const currentUser = JSON.parse(localStorage.getItem('user'));
+
+    if (currentUser && token) {
+      try {
+        await fetch('http://localhost:5000/api/logout', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ userId: currentUser.id }),
+        });
+      } catch (error) {
+        console.error('Ошибка при выходе на сервере:', error);
+      }
+    }
+
     setUser(null);
     localStorage.removeItem('user');
     localStorage.removeItem('token');

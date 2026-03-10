@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { Table, Tag, Card, message, Spin, Input } from 'antd';
+import { Table, Tag, Card, message, Input } from 'antd';
 import { SafetyCertificateOutlined, SearchOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
+import { apiFetch } from '../utils/api';
 
 const SystemLogs = () => {
   const [logs, setLogs] = useState([]);
@@ -11,7 +12,7 @@ const SystemLogs = () => {
   const fetchLogs = async () => {
     setLoading(true);
     try {
-      const res = await fetch('http://localhost:5000/api/logs');
+      const res = await apiFetch('/api/logs');
       if (res.ok) {
         setLogs(await res.json());
       } else {
@@ -70,11 +71,7 @@ const SystemLogs = () => {
       width: 100,
       align: 'center',
     },
-    {
-      title: 'Детали изменения',
-      dataIndex: 'details',
-      key: 'details',
-    },
+    { title: 'Детали изменения', dataIndex: 'details', key: 'details' },
     {
       title: 'Пользователь БД',
       dataIndex: 'user_context',
@@ -90,7 +87,6 @@ const SystemLogs = () => {
         <h2 className="text-2xl font-bold m-0 flex items-center gap-2">
           <SafetyCertificateOutlined /> Аудит действий
         </h2>
-
         <Input
           prefix={<SearchOutlined />}
           placeholder="Поиск по логам..."

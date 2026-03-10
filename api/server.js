@@ -5,12 +5,25 @@ import db from './db.js';
 import redisClient from './redis.js';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
+import { authenticateToken } from './authMiddleware.js';
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 
 app.use(cors());
 app.use(express.json());
+
+const clearCache = async (pattern) => {
+  try {
+    const keys = await redisClient.keys(pattern);
+    if (keys.length > 0) {
+      await redisClient.del(keys);
+      console.log(`[Cache] Инвалидация кэша для ключей: ${keys.join(', ')}`);
+    }
+  } catch (err) {
+    console.error('[Cache] Ошибка при очистке кэша:', err);
+  }
+};
 
 app.post('/api/login', async (req, res) => {
   const { username, password } = req.body;
@@ -41,9 +54,7 @@ app.post('/api/login', async (req, res) => {
       const attemptsKey = `attempts:${username}`;
       const attempts = await redisClient.incr(attemptsKey);
 
-      if (attempts === 1) {
-        await redisClient.expire(attemptsKey, 600);
-      }
+      if (attempts === 1) await redisClient.expire(attemptsKey, 600);
 
       if (attempts >= 3) {
         await redisClient.setEx(`blacklist:${username}`, 600, 'blocked');
@@ -61,10 +72,8 @@ app.post('/api/login', async (req, res) => {
       });
     }
 
-    // 4. Пароль верный: очищаем счетчик ошибок (если были)
     await redisClient.del(`attempts:${username}`);
 
-    // 5. Генерируем JWT токен
     const token = jwt.sign(
       {
         id: user.id,
@@ -77,22 +86,56 @@ app.post('/api/login', async (req, res) => {
       { expiresIn: '8h' }
     );
 
-    res.json({
-      token,
-      user: {
-        username: user.username,
-        role: user.role,
-      },
-    });
+    const sessionData = {
+      id: user.id,
+      username: user.username,
+      role: user.role,
+      dentist_id: user.dentist_id,
+      assistant_id: user.assistant_id,
+      login_time: new Date().toISOString(),
+    };
+
+    await redisClient.setEx(
+      `session:${user.id}`,
+      28800,
+      JSON.stringify(sessionData)
+    );
+
+    res.json({ token, user: sessionData });
   } catch (error) {
-    console.error('Ошибка при авторизации:', error);
     res.status(500).json({ error: 'Внутренняя ошибка сервера' });
   }
 });
 
+app.post('/api/logout', async (req, res) => {
+  const { userId } = req.body;
+  try {
+    if (userId) {
+      await redisClient.del(`session:${userId}`);
+      console.log(`[Session] Сессия пользователя ${userId} уничтожена`);
+    }
+    res.json({ message: 'Успешный выход' });
+  } catch (error) {
+    res.status(500).json({ error: 'Ошибка при выходе' });
+  }
+});
+
+app.use('/api', authenticateToken);
+
 app.get('/api/patients', async (req, res) => {
   const { search } = req.query;
+
+  const cacheKey = search
+    ? `cache:patients:search:${search}`
+    : 'cache:patients:all';
+
   try {
+    const cachedData = await redisClient.get(cacheKey);
+    if (cachedData) {
+      console.log(`[Cache] Возвращаем пациентов из кэша (${cacheKey})`);
+      return res.json(JSON.parse(cachedData));
+    }
+
     let query = 'SELECT * FROM Patient';
     let params = [];
 
@@ -104,9 +147,10 @@ app.get('/api/patients', async (req, res) => {
 
     query += ' ORDER BY id DESC';
     const [rows] = await db.query(query, params);
+
+    await redisClient.setEx(cacheKey, 3600, JSON.stringify(rows));
     res.json(rows);
   } catch (error) {
-    console.error('Ошибка:', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -123,10 +167,13 @@ app.post('/api/patients', async (req, res) => {
   } = req.body;
   try {
     const [result] = await db.query(
-      `INSERT INTO Patient (first_name, last_name, birth_date, gender, Address, phone_number, email) 
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO Patient (first_name, last_name, birth_date, gender, Address, phone_number, email) VALUES (?, ?, ?, ?, ?, ?, ?)`,
       [first_name, last_name, birth_date, gender, Address, phone_number, email]
     );
+
+    await clearCache('cache:patients*');
+    await clearCache('cache:dashboard_stats');
+
     res.status(201).json({ id: result.insertId, ...req.body });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -146,8 +193,7 @@ app.put('/api/patients/:id', async (req, res) => {
   } = req.body;
   try {
     await db.query(
-      `UPDATE Patient SET first_name=?, last_name=?, birth_date=?, gender=?, Address=?, phone_number=?, email=? 
-       WHERE id=?`,
+      `UPDATE Patient SET first_name=?, last_name=?, birth_date=?, gender=?, Address=?, phone_number=?, email=? WHERE id=?`,
       [
         first_name,
         last_name,
@@ -159,6 +205,9 @@ app.put('/api/patients/:id', async (req, res) => {
         id,
       ]
     );
+
+    await clearCache('cache:patients*');
+
     res.json({ message: 'Данные обновлены', id });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -168,12 +217,15 @@ app.put('/api/patients/:id', async (req, res) => {
 app.delete('/api/patients/:id', async (req, res) => {
   try {
     await db.query('DELETE FROM Patient WHERE id = ?', [req.params.id]);
+
+    await clearCache('cache:patients*');
+    await clearCache('cache:dashboard_stats');
+
     res.json({ message: 'Пациент удален' });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
-
 app.get('/api/patients/:id/record', async (req, res) => {
   try {
     const [rows] = await db.query(
@@ -189,13 +241,11 @@ app.get('/api/patients/:id/record', async (req, res) => {
 app.post('/api/patients/:id/record', async (req, res) => {
   const { id } = req.params;
   const { diagnosis, allergies } = req.body;
-
   try {
     const [existing] = await db.query(
       'SELECT id FROM Medical_Record WHERE patient_id = ?',
       [id]
     );
-
     if (existing.length > 0) {
       await db.query(
         'UPDATE Medical_Record SET diagnosis = ?, allergies = ? WHERE patient_id = ?',
@@ -216,7 +266,17 @@ app.post('/api/patients/:id/record', async (req, res) => {
 
 app.get('/api/dentists', async (req, res) => {
   const { search } = req.query;
+  const cacheKey = search
+    ? `cache:dentists:search:${search}`
+    : 'cache:dentists:all';
+
   try {
+    const cachedData = await redisClient.get(cacheKey);
+    if (cachedData) {
+      console.log(`[Cache] Возвращаем стоматологов из кэша (${cacheKey})`);
+      return res.json(JSON.parse(cachedData));
+    }
+
     let query = 'SELECT * FROM Dentist';
     let params = [];
     if (search) {
@@ -224,6 +284,8 @@ app.get('/api/dentists', async (req, res) => {
       params = [`%${search}%`, `%${search}%`];
     }
     const [rows] = await db.query(query, params);
+
+    await redisClient.setEx(cacheKey, 3600, JSON.stringify(rows));
     res.json(rows);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -241,8 +303,7 @@ app.post('/api/dentists', async (req, res) => {
   } = req.body;
   try {
     const [result] = await db.query(
-      `INSERT INTO Dentist (first_name, last_name, specialization, experience, license_number, schedule) 
-       VALUES (?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO Dentist (first_name, last_name, specialization, experience, license_number, schedule) VALUES (?, ?, ?, ?, ?, ?)`,
       [
         first_name,
         last_name,
@@ -252,6 +313,7 @@ app.post('/api/dentists', async (req, res) => {
         schedule,
       ]
     );
+    await clearCache('cache:dentists*');
     res.status(201).json({ id: result.insertId, ...req.body });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -270,8 +332,7 @@ app.put('/api/dentists/:id', async (req, res) => {
   } = req.body;
   try {
     await db.query(
-      `UPDATE Dentist SET first_name=?, last_name=?, specialization=?, experience=?, license_number=?, schedule=? 
-       WHERE id=?`,
+      `UPDATE Dentist SET first_name=?, last_name=?, specialization=?, experience=?, license_number=?, schedule=? WHERE id=?`,
       [
         first_name,
         last_name,
@@ -282,6 +343,7 @@ app.put('/api/dentists/:id', async (req, res) => {
         id,
       ]
     );
+    await clearCache('cache:dentists*');
     res.json({ message: 'Стоматолог обновлен' });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -291,15 +353,28 @@ app.put('/api/dentists/:id', async (req, res) => {
 app.delete('/api/dentists/:id', async (req, res) => {
   try {
     await db.query('DELETE FROM Dentist WHERE id = ?', [req.params.id]);
+    await clearCache('cache:dentists*');
     res.json({ message: 'Стоматолог удален' });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    if (error.errno === 1451) {
+      res.status(400).json({
+        error: 'Нельзя удалить врача: у него есть приемы',
+      });
+    } else {
+      res.status(500).json({ error: error.message });
+    }
   }
 });
-
 app.get('/api/assistants', async (req, res) => {
   try {
+    const cachedData = await redisClient.get('cache:assistants');
+    if (cachedData) {
+      console.log('[Cache] Возвращаем ассистентов из кэша');
+      return res.json(JSON.parse(cachedData));
+    }
+
     const [rows] = await db.query('SELECT * FROM Assistant');
+    await redisClient.setEx('cache:assistants', 3600, JSON.stringify(rows));
     res.json(rows);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -313,6 +388,7 @@ app.post('/api/assistants', async (req, res) => {
       `INSERT INTO Assistant (first_name, last_name, position, experience) VALUES (?, ?, ?, ?)`,
       [first_name, last_name, position, experience]
     );
+    await clearCache('cache:assistants');
     res.status(201).json({ id: result.insertId, ...req.body });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -327,6 +403,7 @@ app.put('/api/assistants/:id', async (req, res) => {
       `UPDATE Assistant SET first_name=?, last_name=?, position=?, experience=? WHERE id=?`,
       [first_name, last_name, position, experience, id]
     );
+    await clearCache('cache:assistants');
     res.json({ message: 'Ассистент обновлен' });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -336,6 +413,7 @@ app.put('/api/assistants/:id', async (req, res) => {
 app.delete('/api/assistants/:id', async (req, res) => {
   try {
     await db.query('DELETE FROM Assistant WHERE id = ?', [req.params.id]);
+    await clearCache('cache:assistants');
     res.json({ message: 'Ассистент удален' });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -360,6 +438,7 @@ app.post('/api/materials', async (req, res) => {
       'INSERT INTO Material (name, quantity, expiration_date) VALUES (?, ?, ?)',
       [name, quantity, expiration_date]
     );
+    await clearCache('cache:dashboard_stats');
     res.status(201).json({ id: result.insertId, ...req.body });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -374,6 +453,7 @@ app.put('/api/materials/:id', async (req, res) => {
       'UPDATE Material SET name=?, quantity=?, expiration_date=? WHERE id=?',
       [name, quantity, expiration_date, id]
     );
+    await clearCache('cache:dashboard_stats');
     res.json({ message: 'Материал обновлен' });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -383,6 +463,7 @@ app.put('/api/materials/:id', async (req, res) => {
 app.delete('/api/materials/:id', async (req, res) => {
   try {
     await db.query('DELETE FROM Material WHERE id=?', [req.params.id]);
+    await clearCache('cache:dashboard_stats');
     res.json({ message: 'Материал удален' });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -391,11 +472,7 @@ app.delete('/api/materials/:id', async (req, res) => {
 
 app.get('/api/equipment', async (req, res) => {
   try {
-    const query = `
-      SELECT e.*, r.number as room_number 
-      FROM Equipment e
-      JOIN Room r ON e.room_id = r.id
-    `;
+    const query = `SELECT e.*, r.number as room_number FROM Equipment e JOIN Room r ON e.room_id = r.id`;
     const [rows] = await db.query(query);
     res.json(rows);
   } catch (error) {
@@ -407,8 +484,7 @@ app.post('/api/equipment', async (req, res) => {
   const { name, serial_number, date_of_purchase, status, room_id } = req.body;
   try {
     const [result] = await db.query(
-      `INSERT INTO Equipment (name, serial_number, date_of_purchase, status, room_id) 
-       VALUES (?, ?, ?, ?, ?)`,
+      `INSERT INTO Equipment (name, serial_number, date_of_purchase, status, room_id) VALUES (?, ?, ?, ?, ?)`,
       [name, serial_number, date_of_purchase, status, room_id]
     );
     res.status(201).json({ id: result.insertId, ...req.body });
@@ -422,8 +498,7 @@ app.put('/api/equipment/:id', async (req, res) => {
   const { name, serial_number, date_of_purchase, status, room_id } = req.body;
   try {
     await db.query(
-      `UPDATE Equipment SET name=?, serial_number=?, date_of_purchase=?, status=?, room_id=? 
-       WHERE id=?`,
+      `UPDATE Equipment SET name=?, serial_number=?, date_of_purchase=?, status=?, room_id=? WHERE id=?`,
       [name, serial_number, date_of_purchase, status, room_id, id]
     );
     res.json({ message: 'Оборудование обновлено' });
@@ -445,7 +520,14 @@ app.delete('/api/equipment/:id', async (req, res) => {
 
 app.get('/api/rooms', async (req, res) => {
   try {
+    const cachedData = await redisClient.get('cache:rooms');
+    if (cachedData) {
+      console.log('[Cache] Возвращаем кабинеты из кэша');
+      return res.json(JSON.parse(cachedData));
+    }
+
     const [rows] = await db.query('SELECT * FROM Room');
+    await redisClient.setEx('cache:rooms', 86400, JSON.stringify(rows));
     res.json(rows);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -454,7 +536,17 @@ app.get('/api/rooms', async (req, res) => {
 
 app.get('/api/treatments', async (req, res) => {
   const { search } = req.query;
+  const cacheKey = search
+    ? `cache:treatments:search:${search}`
+    : 'cache:treatments:all';
+
   try {
+    const cachedData = await redisClient.get(cacheKey);
+    if (cachedData) {
+      console.log(`[Cache] Возвращаем услуги из кэша (${cacheKey})`);
+      return res.json(JSON.parse(cachedData));
+    }
+
     let query = 'SELECT * FROM Treatment';
     let params = [];
     if (search) {
@@ -463,6 +555,8 @@ app.get('/api/treatments', async (req, res) => {
     }
     query += ' ORDER BY name ASC';
     const [rows] = await db.query(query, params);
+
+    await redisClient.setEx(cacheKey, 3600, JSON.stringify(rows));
     res.json(rows);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -472,21 +566,24 @@ app.get('/api/treatments', async (req, res) => {
 app.get('/api/treatments/:id', async (req, res) => {
   try {
     const { id } = req.params;
+    const cacheKey = `cache:treatments:detail:${id}`;
+
+    const cachedData = await redisClient.get(cacheKey);
+    if (cachedData) {
+      return res.json(JSON.parse(cachedData));
+    }
 
     const [tRows] = await db.query('SELECT * FROM Treatment WHERE id = ?', [
       id,
     ]);
-
-    if (tRows.length === 0) {
+    if (tRows.length === 0)
       return res.status(404).json({ message: 'Нет такой услуги' });
-    }
     const treatment = tRows[0];
 
     const [mRows] = await db.query(
       `SELECT material_id, quantity_needed FROM Treatment_Material WHERE treatment_id = ?`,
       [id]
     );
-
     const [eRows] = await db.query(
       `SELECT equipment_id FROM Treatment_Equipment WHERE treatment_id = ?`,
       [id]
@@ -498,9 +595,9 @@ app.get('/api/treatments/:id', async (req, res) => {
     }));
     treatment.equipment = eRows.map((e) => e.equipment_id);
 
+    await redisClient.setEx(cacheKey, 3600, JSON.stringify(treatment));
     res.json(treatment);
   } catch (error) {
-    console.error(error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -508,10 +605,8 @@ app.get('/api/treatments/:id', async (req, res) => {
 app.post('/api/treatments', async (req, res) => {
   const { name, description, duration, cost, materials, equipment } = req.body;
   const connection = await db.getConnection();
-
   try {
     await connection.beginTransaction();
-
     const [resInsert] = await connection.query(
       'INSERT INTO Treatment (name, description, duration, cost) VALUES (?, ?, ?, ?)',
       [name, description, duration, cost]
@@ -525,7 +620,6 @@ app.post('/api/treatments', async (req, res) => {
         [matValues]
       );
     }
-
     if (equipment && equipment.length > 0) {
       const equipValues = equipment.map((eId) => [newId, eId]);
       await connection.query(
@@ -533,8 +627,9 @@ app.post('/api/treatments', async (req, res) => {
         [equipValues]
       );
     }
-
     await connection.commit();
+
+    await clearCache('cache:treatments*');
     res.status(201).json({ message: 'Услуга создана' });
   } catch (error) {
     await connection.rollback();
@@ -548,15 +643,12 @@ app.put('/api/treatments/:id', async (req, res) => {
   const { id } = req.params;
   const { name, description, duration, cost, materials, equipment } = req.body;
   const connection = await db.getConnection();
-
   try {
     await connection.beginTransaction();
-
     await connection.query(
       'UPDATE Treatment SET name=?, description=?, duration=?, cost=? WHERE id=?',
       [name, description, duration, cost, id]
     );
-
     await connection.query(
       'DELETE FROM Treatment_Material WHERE treatment_id = ?',
       [id]
@@ -568,7 +660,6 @@ app.put('/api/treatments/:id', async (req, res) => {
         [matValues]
       );
     }
-
     await connection.query(
       'DELETE FROM Treatment_Equipment WHERE treatment_id = ?',
       [id]
@@ -580,8 +671,9 @@ app.put('/api/treatments/:id', async (req, res) => {
         [equipValues]
       );
     }
-
     await connection.commit();
+
+    await clearCache('cache:treatments*');
     res.json({ message: 'Услуга обновлена' });
   } catch (error) {
     await connection.rollback();
@@ -594,15 +686,14 @@ app.put('/api/treatments/:id', async (req, res) => {
 app.delete('/api/treatments/:id', async (req, res) => {
   try {
     await db.query('DELETE FROM Treatment WHERE id = ?', [req.params.id]);
+    await clearCache('cache:treatments*');
     res.json({ message: 'Услуга удалена' });
   } catch (error) {
-    if (error.errno === 1451) {
+    if (error.errno === 1451)
       res
         .status(400)
         .json({ error: 'Нельзя удалить: эта услуга используется.' });
-    } else {
-      res.status(500).json({ error: error.message });
-    }
+    else res.status(500).json({ error: error.message });
   }
 });
 
@@ -611,8 +702,7 @@ app.get('/api/appointments', async (req, res) => {
     const query = `
       SELECT a.id, a.date_time, a.status, 
              p.last_name as p_last, p.first_name as p_first,
-             d.last_name as d_last, d.specialization,
-             r.number as room_number
+             d.last_name as d_last, d.specialization, r.number as room_number
       FROM Appointment a
       JOIN Patient p ON a.patient_id = p.id
       JOIN Dentist d ON a.dentist_id = d.id
@@ -629,30 +719,19 @@ app.get('/api/appointments', async (req, res) => {
 app.get('/api/appointments/:id', async (req, res) => {
   try {
     const { id } = req.params;
-
     const [appointmentRows] = await db.query(
-      `SELECT a.*, 
-              p.last_name as p_last, p.first_name as p_first,
-              d.last_name as d_last, d.specialization
-       FROM Appointment a
-       JOIN Patient p ON a.patient_id = p.id
-       JOIN Dentist d ON a.dentist_id = d.id
-       WHERE a.id = ?`,
+      `SELECT a.*, p.last_name as p_last, p.first_name as p_first, d.last_name as d_last, d.specialization
+       FROM Appointment a JOIN Patient p ON a.patient_id = p.id JOIN Dentist d ON a.dentist_id = d.id WHERE a.id = ?`,
       [id]
     );
-
-    if (appointmentRows.length === 0) {
+    if (appointmentRows.length === 0)
       return res.status(404).json({ message: 'Прием не найден' });
-    }
 
     const [treatmentRows] = await db.query(
       `SELECT t.id, t.name, t.cost, at.quantity
-       FROM Appointment_Treatment at
-       JOIN Treatment t ON at.treatment_id = t.id
-       WHERE at.appointment_id = ?`,
+       FROM Appointment_Treatment at JOIN Treatment t ON at.treatment_id = t.id WHERE at.appointment_id = ?`,
       [id]
     );
-
     res.json({ ...appointmentRows[0], treatments: treatmentRows });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -663,10 +742,10 @@ app.post('/api/appointments', async (req, res) => {
   const { date_time, patient_id, dentist_id, assistant_id, room_id } = req.body;
   try {
     const [result] = await db.query(
-      `INSERT INTO Appointment (date_time, status, patient_id, dentist_id, assistant_id, room_id) 
-       VALUES (?, 'scheduled', ?, ?, ?, ?)`,
+      `INSERT INTO Appointment (date_time, status, patient_id, dentist_id, assistant_id, room_id) VALUES (?, 'scheduled', ?, ?, ?, ?)`,
       [date_time, patient_id, dentist_id, assistant_id || null, room_id]
     );
+    await clearCache('cache:dashboard_stats');
     res.status(201).json({ id: result.insertId, ...req.body });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -676,11 +755,9 @@ app.post('/api/appointments', async (req, res) => {
 app.put('/api/appointments/:id', async (req, res) => {
   const { id } = req.params;
   const { status, treatments } = req.body;
-
   const connection = await db.getConnection();
   try {
     await connection.beginTransaction();
-
     await connection.query('UPDATE Appointment SET status = ? WHERE id = ?', [
       status,
       id,
@@ -691,7 +768,6 @@ app.put('/api/appointments/:id', async (req, res) => {
         'DELETE FROM Appointment_Treatment WHERE appointment_id = ?',
         [id]
       );
-
       if (treatments.length > 0) {
         const values = treatments.map((tId) => [id, tId, 1]);
         await connection.query(
@@ -700,8 +776,9 @@ app.put('/api/appointments/:id', async (req, res) => {
         );
       }
     }
-
     await connection.commit();
+
+    await clearCache('cache:dashboard_stats');
     res.json({ message: 'Прием успешно сохранен' });
   } catch (error) {
     await connection.rollback();
@@ -713,65 +790,59 @@ app.put('/api/appointments/:id', async (req, res) => {
 
 app.get('/api/dashboard/stats', async (req, res) => {
   try {
-    const connection = await db.getConnection();
+    const cachedData = await redisClient.get('cache:dashboard_stats');
+    if (cachedData) {
+      console.log('[Cache] Возвращаем аналитику из кэша');
+      return res.json(JSON.parse(cachedData));
+    }
 
+    const connection = await db.getConnection();
     const [patients] = await connection.query(
       'SELECT COUNT(*) as count FROM Patient'
     );
-
     const [appointmentsToday] = await connection.query(
       'SELECT COUNT(*) as count FROM Appointment WHERE DATE(date_time) = CURDATE()'
     );
-
     const [revenue] = await connection.query(`
       SELECT SUM(t.cost * at.quantity) as total 
-      FROM Appointment a
-      JOIN Appointment_Treatment at ON a.id = at.appointment_id
-      JOIN Treatment t ON at.treatment_id = t.id
-      WHERE a.status = 'completed' 
-        AND MONTH(a.date_time) = MONTH(CURRENT_DATE()) 
-        AND YEAR(a.date_time) = YEAR(CURRENT_DATE())
+      FROM Appointment a JOIN Appointment_Treatment at ON a.id = at.appointment_id JOIN Treatment t ON at.treatment_id = t.id
+      WHERE a.status = 'completed' AND MONTH(a.date_time) = MONTH(CURRENT_DATE()) AND YEAR(a.date_time) = YEAR(CURRENT_DATE())
     `);
-
     const [topTreatment] = await connection.query(`
       SELECT t.name, COUNT(at.treatment_id) as usage_count 
-      FROM Appointment_Treatment at
-      JOIN Treatment t ON at.treatment_id = t.id
-      GROUP BY t.id, t.name
-      ORDER BY usage_count DESC
-      LIMIT 1
+      FROM Appointment_Treatment at JOIN Treatment t ON at.treatment_id = t.id GROUP BY t.id, t.name ORDER BY usage_count DESC LIMIT 1
     `);
-
     const [lowStock] = await connection.query(
       'SELECT COUNT(*) as count FROM Material WHERE quantity < 10'
     );
-
     connection.release();
 
-    res.json({
+    const stats = {
       patientsCount: patients[0].count,
       appointmentsToday: appointmentsToday[0].count,
       monthlyRevenue: revenue[0].total || 0,
       topTreatment: topTreatment[0] ? topTreatment[0].name : 'Нет данных',
       lowStockCount: lowStock[0].count,
-    });
+    };
+
+    await redisClient.setEx(
+      'cache:dashboard_stats',
+      300,
+      JSON.stringify(stats)
+    );
+    res.json(stats);
   } catch (error) {
-    console.error(error);
     res.status(500).json({ error: error.message });
   }
 });
 
 app.get('/api/logs', async (req, res) => {
   try {
-    const query = `
-      SELECT * FROM AuditLog 
-      ORDER BY action_time DESC 
-      LIMIT 100
-    `;
-    const [rows] = await db.query(query);
+    const [rows] = await db.query(
+      'SELECT * FROM AuditLog ORDER BY action_time DESC LIMIT 100'
+    );
     res.json(rows);
   } catch (error) {
-    console.error('Ошибка получения логов:', error);
     res.status(500).json({ error: error.message });
   }
 });
