@@ -6,6 +6,9 @@ import redisClient from './redis.js';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import { authenticateToken } from './authMiddleware.js';
+import Log, { connectMongo } from './mongo.js';
+
+connectMongo();
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -25,6 +28,17 @@ const clearCache = async (pattern) => {
   }
 };
 
+const writeLog = async (data) => {
+  try {
+    await Log.create({
+      timestamp: new Date(),
+      ...data,
+    });
+  } catch (err) {
+    console.error('[MongoLog] Ошибка записи лога:', err);
+  }
+};
+
 app.post('/api/login', async (req, res) => {
   const { username, password } = req.body;
 
@@ -32,9 +46,10 @@ app.post('/api/login', async (req, res) => {
     const isBlocked = await redisClient.get(`blacklist:${username}`);
     if (isBlocked) {
       const ttl = await redisClient.ttl(`blacklist:${username}`);
-      const minutesLeft = Math.ceil(ttl / 60);
       return res.status(403).json({
-        message: `Превышено количество попыток. Пользователь заблокирован. Попробуйте через ${minutesLeft} мин.`,
+        message: `Пользователь заблокирован. Попробуйте через ${Math.ceil(
+          ttl / 60
+        )} мин.`,
       });
     }
 
@@ -46,52 +61,45 @@ app.post('/api/login', async (req, res) => {
         .status(401)
         .json({ message: 'Неверное имя пользователя или пароль' });
     }
-    const user = users[0];
 
+    const user = users[0];
     const isMatch = await bcrypt.compare(password, user.password_hash);
 
     if (!isMatch) {
       const attemptsKey = `attempts:${username}`;
       const attempts = await redisClient.incr(attemptsKey);
-
       if (attempts === 1) await redisClient.expire(attemptsKey, 600);
 
       if (attempts >= 3) {
         await redisClient.setEx(`blacklist:${username}`, 600, 'blocked');
         await redisClient.del(attemptsKey);
-        return res.status(403).json({
-          message:
-            'Вы ввели неверный пароль 3 раза. Учетная запись заблокирована на 10 минут.',
-        });
-      }
 
+        await writeLog({
+          level: 'warn',
+          action_type: 'AUTH_BLOCK',
+          username,
+          details: 'User blocked after 3 failed attempts',
+        });
+
+        return res
+          .status(403)
+          .json({ message: 'Аккаунт заблокирован на 10 минут.' });
+      }
       return res.status(401).json({
-        message: `Неверное имя пользователя или пароль. Осталось попыток: ${
-          3 - attempts
-        }`,
+        message: `Неверный пароль. Попыток осталось: ${3 - attempts}`,
       });
     }
 
     await redisClient.del(`attempts:${username}`);
 
-    const token = jwt.sign(
-      {
-        id: user.id,
-        username: user.username,
-        role: user.role,
-        dentist_id: user.dentist_id,
-        assistant_id: user.assistant_id,
-      },
-      process.env.JWT_SECRET,
-      { expiresIn: '8h' }
-    );
+    const token = jwt.sign({ id: user.id }, process.env.JWT_SECRET, {
+      expiresIn: '8h',
+    });
 
     const sessionData = {
       id: user.id,
       username: user.username,
       role: user.role,
-      dentist_id: user.dentist_id,
-      assistant_id: user.assistant_id,
       login_time: new Date().toISOString(),
     };
 
@@ -101,9 +109,15 @@ app.post('/api/login', async (req, res) => {
       JSON.stringify(sessionData)
     );
 
+    await writeLog({
+      action_type: 'LOGIN',
+      username: user.username,
+      details: 'Успешный вход в систему',
+    });
+
     res.json({ token, user: sessionData });
   } catch (error) {
-    res.status(500).json({ error: 'Внутренняя ошибка сервера' });
+    next(error);
   }
 });
 
@@ -111,12 +125,54 @@ app.post('/api/logout', async (req, res) => {
   const { userId } = req.body;
   try {
     if (userId) {
+      const sessionData = await redisClient.get(`session:${userId}`);
+      let username = 'unknown';
+
+      if (sessionData) {
+        const parsed = JSON.parse(sessionData);
+        username = parsed.username;
+      }
+
       await redisClient.del(`session:${userId}`);
-      console.log(`[Session] Сессия пользователя ${userId} уничтожена`);
+      console.log(
+        `[Session] Сессия пользователя ${username} (ID: ${userId}) уничтожена`
+      );
+
+      await writeLog({
+        action_type: 'LOGOUT',
+        user_id: userId,
+        username: username,
+        details: 'Пользователь вышел из системы',
+      });
     }
     res.json({ message: 'Успешный выход' });
   } catch (error) {
+    console.error('Ошибка при выходе:', error);
     res.status(500).json({ error: 'Ошибка при выходе' });
+  }
+});
+
+app.get('/api/logs', authenticateToken, async (req, res) => {
+  const { startDate, endDate, user, type, level } = req.query;
+  let filter = {};
+
+  if (startDate || endDate) {
+    filter.timestamp = {};
+    if (startDate) filter.timestamp.$gte = new Date(startDate);
+    if (endDate) filter.timestamp.$lte = new Date(endDate);
+  }
+
+  if (type) filter.action_type = type;
+
+  if (level) filter.level = level;
+
+  if (user) filter.username = new RegExp(user, 'i');
+
+  try {
+    const logs = await Log.find(filter).sort({ timestamp: -1 }).limit(100);
+    res.json(logs);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
   }
 });
 
@@ -124,33 +180,44 @@ app.use('/api', authenticateToken);
 
 app.get('/api/patients', async (req, res) => {
   const { search } = req.query;
-
   const cacheKey = search
     ? `cache:patients:search:${search}`
     : 'cache:patients:all';
 
   try {
+    await writeLog({
+      action_type: 'SELECT',
+      table_name: 'Patient',
+      username: req.user?.username,
+      details: search
+        ? `Поиск пациентов по запросу: ${search}`
+        : 'Получение полного списка пациентов',
+    });
+
     const cachedData = await redisClient.get(cacheKey);
     if (cachedData) {
-      console.log(`[Cache] Возвращаем пациентов из кэша (${cacheKey})`);
       return res.json(JSON.parse(cachedData));
     }
 
     let query = 'SELECT * FROM Patient';
     let params = [];
-
     if (search) {
       query +=
         ' WHERE last_name LIKE ? OR first_name LIKE ? OR phone_number LIKE ?';
       params = [`%${search}%`, `%${search}%`, `%${search}%`];
     }
-
     query += ' ORDER BY id DESC';
     const [rows] = await db.query(query, params);
 
     await redisClient.setEx(cacheKey, 3600, JSON.stringify(rows));
     res.json(rows);
   } catch (error) {
+    await writeLog({
+      level: 'error',
+      action_type: 'APP_ERROR',
+      username: req.user?.username,
+      details: { message: error.message, path: '/api/patients (GET)' },
+    });
     res.status(500).json({ error: error.message });
   }
 });
@@ -171,11 +238,25 @@ app.post('/api/patients', async (req, res) => {
       [first_name, last_name, birth_date, gender, Address, phone_number, email]
     );
 
+    await writeLog({
+      action_type: 'INSERT',
+      table_name: 'Patient',
+      record_id: result.insertId,
+      username: req.user.username,
+      details: `Добавлен новый пациент: ${first_name} ${last_name}`,
+    });
+
     await clearCache('cache:patients*');
     await clearCache('cache:dashboard_stats');
 
     res.status(201).json({ id: result.insertId, ...req.body });
   } catch (error) {
+    await writeLog({
+      level: 'error',
+      action_type: 'APP_ERROR',
+      username: req.user?.username,
+      details: { message: error.message, path: '/api/patients (POST)' },
+    });
     res.status(500).json({ error: error.message });
   }
 });
@@ -206,26 +287,55 @@ app.put('/api/patients/:id', async (req, res) => {
       ]
     );
 
-    await clearCache('cache:patients*');
+    await writeLog({
+      action_type: 'UPDATE',
+      table_name: 'Patient',
+      record_id: id,
+      username: req.user.username,
+      details: `Обновлена иформация пользователя с ID: ${id} (${last_name})`,
+    });
 
+    await clearCache('cache:patients*');
     res.json({ message: 'Данные обновлены', id });
   } catch (error) {
+    await writeLog({
+      level: 'error',
+      action_type: 'APP_ERROR',
+      username: req.user?.username,
+      details: { message: error.message, path: `/api/patients/${id} (PUT)` },
+    });
     res.status(500).json({ error: error.message });
   }
 });
 
 app.delete('/api/patients/:id', async (req, res) => {
+  const { id } = req.params;
   try {
-    await db.query('DELETE FROM Patient WHERE id = ?', [req.params.id]);
+    await db.query('DELETE FROM Patient WHERE id = ?', [id]);
+
+    await writeLog({
+      action_type: 'DELETE',
+      table_name: 'Patient',
+      record_id: id,
+      username: req.user.username,
+      details: `Удалён пациент с ID: ${id}`,
+    });
 
     await clearCache('cache:patients*');
     await clearCache('cache:dashboard_stats');
 
     res.json({ message: 'Пациент удален' });
   } catch (error) {
+    await writeLog({
+      level: 'error',
+      action_type: 'APP_ERROR',
+      username: req.user?.username,
+      details: { message: error.message, path: `/api/patients/${id} (DELETE)` },
+    });
     res.status(500).json({ error: error.message });
   }
 });
+
 app.get('/api/patients/:id/record', async (req, res) => {
   try {
     const [rows] = await db.query(
@@ -271,9 +381,17 @@ app.get('/api/dentists', async (req, res) => {
     : 'cache:dentists:all';
 
   try {
+    await writeLog({
+      action_type: 'SELECT',
+      table_name: 'Dentist',
+      username: req.user?.username,
+      details: search
+        ? `Поиск стоматологов по запросу: "${search}"`
+        : 'Получение полного списка стоматологов',
+    });
+
     const cachedData = await redisClient.get(cacheKey);
     if (cachedData) {
-      console.log(`[Cache] Возвращаем стоматологов из кэша (${cacheKey})`);
       return res.json(JSON.parse(cachedData));
     }
 
@@ -288,6 +406,12 @@ app.get('/api/dentists', async (req, res) => {
     await redisClient.setEx(cacheKey, 3600, JSON.stringify(rows));
     res.json(rows);
   } catch (error) {
+    await writeLog({
+      level: 'error',
+      action_type: 'APP_ERROR',
+      username: req.user?.username,
+      details: { сообщение: error.message, путь: '/api/dentists (GET)' },
+    });
     res.status(500).json({ error: error.message });
   }
 });
@@ -313,9 +437,24 @@ app.post('/api/dentists', async (req, res) => {
         schedule,
       ]
     );
+
+    await writeLog({
+      action_type: 'INSERT',
+      table_name: 'Dentist',
+      record_id: result.insertId,
+      username: req.user.username,
+      details: `Добавлен новый стоматолог: ${last_name} (Специализация: ${specialization})`,
+    });
+
     await clearCache('cache:dentists*');
     res.status(201).json({ id: result.insertId, ...req.body });
   } catch (error) {
+    await writeLog({
+      level: 'error',
+      action_type: 'APP_ERROR',
+      username: req.user?.username,
+      details: { сообщение: error.message, данные: req.body },
+    });
     res.status(500).json({ error: error.message });
   }
 });
@@ -343,40 +482,91 @@ app.put('/api/dentists/:id', async (req, res) => {
         id,
       ]
     );
+
+    await writeLog({
+      action_type: 'UPDATE',
+      table_name: 'Dentist',
+      record_id: id,
+      username: req.user.username,
+      details: `Обновлена информация о стоматологе ID: ${id} (${last_name})`,
+    });
+
     await clearCache('cache:dentists*');
     res.json({ message: 'Стоматолог обновлен' });
   } catch (error) {
+    await writeLog({
+      level: 'error',
+      action_type: 'APP_ERROR',
+      username: req.user?.username,
+      details: { сообщение: error.message, record_id: id },
+    });
     res.status(500).json({ error: error.message });
   }
 });
 
 app.delete('/api/dentists/:id', async (req, res) => {
+  const { id } = req.params;
   try {
-    await db.query('DELETE FROM Dentist WHERE id = ?', [req.params.id]);
+    await db.query('DELETE FROM Dentist WHERE id = ?', [id]);
+
+    await writeLog({
+      action_type: 'DELETE',
+      table_name: 'Dentist',
+      record_id: id,
+      username: req.user.username,
+      details: `Успешное удаление стоматолога ID: ${id}`,
+    });
+
     await clearCache('cache:dentists*');
     res.json({ message: 'Стоматолог удален' });
   } catch (error) {
     if (error.errno === 1451) {
-      res.status(400).json({
-        error: 'Нельзя удалить врача: у него есть приемы',
+      await writeLog({
+        level: 'warn',
+        action_type: 'DELETE_ERROR',
+        username: req.user.username,
+        details: `Ошибка удаления стоматолога ID: ${id}. Причина: наличие связанных записей (приемов).`,
       });
-    } else {
-      res.status(500).json({ error: error.message });
+      return res
+        .status(400)
+        .json({ error: 'Нельзя удалить врача: у него есть приемы' });
     }
+
+    await writeLog({
+      level: 'error',
+      action_type: 'APP_ERROR',
+      username: req.user?.username,
+      details: { сообщение: error.message, record_id: id },
+    });
+    res.status(500).json({ error: error.message });
   }
 });
+
 app.get('/api/assistants', async (req, res) => {
   try {
+    await writeLog({
+      action_type: 'SELECT',
+      table_name: 'Assistant',
+      username: req.user?.username,
+      details: 'Получение полного списка ассистентов',
+    });
+
     const cachedData = await redisClient.get('cache:assistants');
     if (cachedData) {
-      console.log('[Cache] Возвращаем ассистентов из кэша');
       return res.json(JSON.parse(cachedData));
     }
 
     const [rows] = await db.query('SELECT * FROM Assistant');
+
     await redisClient.setEx('cache:assistants', 3600, JSON.stringify(rows));
     res.json(rows);
   } catch (error) {
+    await writeLog({
+      level: 'error',
+      action_type: 'APP_ERROR',
+      username: req.user?.username,
+      details: { сообщение: error.message, путь: '/api/assistants (GET)' },
+    });
     res.status(500).json({ error: error.message });
   }
 });
@@ -388,9 +578,24 @@ app.post('/api/assistants', async (req, res) => {
       `INSERT INTO Assistant (first_name, last_name, position, experience) VALUES (?, ?, ?, ?)`,
       [first_name, last_name, position, experience]
     );
+
+    await writeLog({
+      action_type: 'INSERT',
+      table_name: 'Assistant',
+      record_id: result.insertId,
+      username: req.user.username,
+      details: `Добавлен новый ассистент: ${last_name} (Должность: ${position})`,
+    });
+
     await clearCache('cache:assistants');
     res.status(201).json({ id: result.insertId, ...req.body });
   } catch (error) {
+    await writeLog({
+      level: 'error',
+      action_type: 'APP_ERROR',
+      username: req.user?.username,
+      details: { сообщение: error.message, данные: req.body },
+    });
     res.status(500).json({ error: error.message });
   }
 });
@@ -403,19 +608,62 @@ app.put('/api/assistants/:id', async (req, res) => {
       `UPDATE Assistant SET first_name=?, last_name=?, position=?, experience=? WHERE id=?`,
       [first_name, last_name, position, experience, id]
     );
+
+    await writeLog({
+      action_type: 'UPDATE',
+      table_name: 'Assistant',
+      record_id: id,
+      username: req.user.username,
+      details: `Обновлена информация об ассистенте ID: ${id} (${last_name})`,
+    });
+
     await clearCache('cache:assistants');
     res.json({ message: 'Ассистент обновлен' });
   } catch (error) {
+    await writeLog({
+      level: 'error',
+      action_type: 'APP_ERROR',
+      username: req.user?.username,
+      details: { сообщение: error.message, record_id: id },
+    });
     res.status(500).json({ error: error.message });
   }
 });
 
 app.delete('/api/assistants/:id', async (req, res) => {
+  const { id } = req.params;
   try {
-    await db.query('DELETE FROM Assistant WHERE id = ?', [req.params.id]);
+    await db.query('DELETE FROM Assistant WHERE id = ?', [id]);
+
+    await writeLog({
+      action_type: 'DELETE',
+      table_name: 'Assistant',
+      record_id: id,
+      username: req.user.username,
+      details: `Успешное удаление ассистента ID: ${id}`,
+    });
+
     await clearCache('cache:assistants');
     res.json({ message: 'Ассистент удален' });
   } catch (error) {
+    if (error.errno === 1451) {
+      await writeLog({
+        level: 'warn',
+        action_type: 'DELETE_ERROR',
+        username: req.user.username,
+        details: `Ошибка удаления ассистента ID: ${id}. Причина: ассистент назначен на приемы.`,
+      });
+      return res
+        .status(400)
+        .json({ error: 'Нельзя удалить: ассистент назначен на приемы.' });
+    }
+
+    await writeLog({
+      level: 'error',
+      action_type: 'APP_ERROR',
+      username: req.user?.username,
+      details: { сообщение: error.message, record_id: id },
+    });
     res.status(500).json({ error: error.message });
   }
 });
@@ -541,11 +789,17 @@ app.get('/api/treatments', async (req, res) => {
     : 'cache:treatments:all';
 
   try {
+    await writeLog({
+      action_type: 'SELECT',
+      table_name: 'Treatment',
+      username: req.user?.username,
+      details: search
+        ? `Поиск услуг в прайс-листе по запросу: "${search}"`
+        : 'Запрос полного прайс-листа услуг',
+    });
+
     const cachedData = await redisClient.get(cacheKey);
-    if (cachedData) {
-      console.log(`[Cache] Возвращаем услуги из кэша (${cacheKey})`);
-      return res.json(JSON.parse(cachedData));
-    }
+    if (cachedData) return res.json(JSON.parse(cachedData));
 
     let query = 'SELECT * FROM Treatment';
     let params = [];
@@ -553,33 +807,36 @@ app.get('/api/treatments', async (req, res) => {
       query += ' WHERE name LIKE ?';
       params = [`%${search}%`];
     }
-    query += ' ORDER BY name ASC';
-    const [rows] = await db.query(query, params);
+    const [rows] = await db.query(query + ' ORDER BY name ASC', params);
 
     await redisClient.setEx(cacheKey, 3600, JSON.stringify(rows));
     res.json(rows);
   } catch (error) {
+    await writeLog({
+      level: 'error',
+      action_type: 'APP_ERROR',
+      username: req.user?.username,
+      details: { ошибка: error.message, путь: '/api/treatments' },
+    });
     res.status(500).json({ error: error.message });
   }
 });
 
 app.get('/api/treatments/:id', async (req, res) => {
-  try {
-    const { id } = req.params;
-    const cacheKey = `cache:treatments:detail:${id}`;
+  const { id } = req.params;
+  const cacheKey = `cache:treatments:detail:${id}`;
 
+  try {
     const cachedData = await redisClient.get(cacheKey);
-    if (cachedData) {
-      return res.json(JSON.parse(cachedData));
-    }
+    if (cachedData) return res.json(JSON.parse(cachedData));
 
     const [tRows] = await db.query('SELECT * FROM Treatment WHERE id = ?', [
       id,
     ]);
     if (tRows.length === 0)
       return res.status(404).json({ message: 'Нет такой услуги' });
-    const treatment = tRows[0];
 
+    const treatment = tRows[0];
     const [mRows] = await db.query(
       `SELECT material_id, quantity_needed FROM Treatment_Material WHERE treatment_id = ?`,
       [id]
@@ -594,6 +851,13 @@ app.get('/api/treatments/:id', async (req, res) => {
       quantity: m.quantity_needed,
     }));
     treatment.equipment = eRows.map((e) => e.equipment_id);
+
+    await writeLog({
+      action_type: 'SELECT',
+      table_name: 'Treatment',
+      username: req.user?.username,
+      details: `Просмотр технологической карты услуги ID: ${id} (${treatment.name})`,
+    });
 
     await redisClient.setEx(cacheKey, 3600, JSON.stringify(treatment));
     res.json(treatment);
@@ -627,7 +891,16 @@ app.post('/api/treatments', async (req, res) => {
         [equipValues]
       );
     }
+
     await connection.commit();
+
+    await writeLog({
+      action_type: 'INSERT',
+      table_name: 'Treatment',
+      record_id: newId,
+      username: req.user.username,
+      details: `Добавлена новая услуга: ${name} (Стоимость: ${cost} BYN, Длительность: ${duration} мин.)`,
+    });
 
     await clearCache('cache:treatments*');
     res.status(201).json({ message: 'Услуга создана' });
@@ -653,6 +926,7 @@ app.put('/api/treatments/:id', async (req, res) => {
       'DELETE FROM Treatment_Material WHERE treatment_id = ?',
       [id]
     );
+
     if (materials && materials.length > 0) {
       const matValues = materials.map((m) => [id, m.id, m.quantity]);
       await connection.query(
@@ -660,6 +934,7 @@ app.put('/api/treatments/:id', async (req, res) => {
         [matValues]
       );
     }
+
     await connection.query(
       'DELETE FROM Treatment_Equipment WHERE treatment_id = ?',
       [id]
@@ -671,7 +946,16 @@ app.put('/api/treatments/:id', async (req, res) => {
         [equipValues]
       );
     }
+
     await connection.commit();
+
+    await writeLog({
+      action_type: 'UPDATE',
+      table_name: 'Treatment',
+      record_id: id,
+      username: req.user.username,
+      details: `Обновлены данные услуги ID: ${id} (${name})`,
+    });
 
     await clearCache('cache:treatments*');
     res.json({ message: 'Услуга обновлена' });
@@ -684,16 +968,33 @@ app.put('/api/treatments/:id', async (req, res) => {
 });
 
 app.delete('/api/treatments/:id', async (req, res) => {
+  const { id } = req.params;
   try {
-    await db.query('DELETE FROM Treatment WHERE id = ?', [req.params.id]);
+    await db.query('DELETE FROM Treatment WHERE id = ?', [id]);
+
+    await writeLog({
+      action_type: 'DELETE',
+      table_name: 'Treatment',
+      record_id: id,
+      username: req.user.username,
+      details: `Удаление услуги ID: ${id} из прайс-листа`,
+    });
+
     await clearCache('cache:treatments*');
     res.json({ message: 'Услуга удалена' });
   } catch (error) {
-    if (error.errno === 1451)
-      res
+    if (error.errno === 1451) {
+      await writeLog({
+        level: 'warn',
+        action_type: 'DELETE_ERROR',
+        username: req.user.username,
+        details: `Не удалось удалить услугу ID: ${id}. Причина: услуга фигурирует в истории приемов пациентов.`,
+      });
+      return res
         .status(400)
-        .json({ error: 'Нельзя удалить: эта услуга используется.' });
-    else res.status(500).json({ error: error.message });
+        .json({ error: 'Нельзя удалить: эта услуга используется в приемах.' });
+    }
+    res.status(500).json({ error: error.message });
   }
 });
 
@@ -710,20 +1011,35 @@ app.get('/api/appointments', async (req, res) => {
       ORDER BY a.date_time ASC
     `;
     const [rows] = await db.query(query);
+
+    await writeLog({
+      action_type: 'SELECT',
+      table_name: 'Appointment',
+      username: req.user?.username,
+      details: 'Запрос общего расписания приемов',
+    });
+
     res.json(rows);
   } catch (error) {
+    await writeLog({
+      level: 'error',
+      action_type: 'APP_ERROR',
+      username: req.user?.username,
+      details: { сообщение: error.message, путь: '/api/appointments (GET)' },
+    });
     res.status(500).json({ error: error.message });
   }
 });
 
 app.get('/api/appointments/:id', async (req, res) => {
+  const { id } = req.params;
   try {
-    const { id } = req.params;
     const [appointmentRows] = await db.query(
       `SELECT a.*, p.last_name as p_last, p.first_name as p_first, d.last_name as d_last, d.specialization
        FROM Appointment a JOIN Patient p ON a.patient_id = p.id JOIN Dentist d ON a.dentist_id = d.id WHERE a.id = ?`,
       [id]
     );
+
     if (appointmentRows.length === 0)
       return res.status(404).json({ message: 'Прием не найден' });
 
@@ -732,6 +1048,14 @@ app.get('/api/appointments/:id', async (req, res) => {
        FROM Appointment_Treatment at JOIN Treatment t ON at.treatment_id = t.id WHERE at.appointment_id = ?`,
       [id]
     );
+
+    await writeLog({
+      action_type: 'SELECT',
+      table_name: 'Appointment',
+      username: req.user?.username,
+      details: `Просмотр карточки приема ID: ${id}`,
+    });
+
     res.json({ ...appointmentRows[0], treatments: treatmentRows });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -745,9 +1069,27 @@ app.post('/api/appointments', async (req, res) => {
       `INSERT INTO Appointment (date_time, status, patient_id, dentist_id, assistant_id, room_id) VALUES (?, 'scheduled', ?, ?, ?, ?)`,
       [date_time, patient_id, dentist_id, assistant_id || null, room_id]
     );
+
+    await writeLog({
+      action_type: 'INSERT',
+      table_name: 'Appointment',
+      record_id: result.insertId,
+      username: req.user.username,
+      details: `Запланирован новый прием для пациента ID: ${patient_id} на дату: ${date_time}`,
+    });
+
     await clearCache('cache:dashboard_stats');
     res.status(201).json({ id: result.insertId, ...req.body });
   } catch (error) {
+    await writeLog({
+      level: 'error',
+      action_type: 'APP_ERROR',
+      username: req.user?.username,
+      details: {
+        сообщение: error.message,
+        действие: 'Ошибка при создании записи на прием',
+      },
+    });
     res.status(500).json({ error: error.message });
   }
 });
@@ -756,8 +1098,10 @@ app.put('/api/appointments/:id', async (req, res) => {
   const { id } = req.params;
   const { status, treatments } = req.body;
   const connection = await db.getConnection();
+
   try {
     await connection.beginTransaction();
+
     await connection.query('UPDATE Appointment SET status = ? WHERE id = ?', [
       status,
       id,
@@ -776,12 +1120,33 @@ app.put('/api/appointments/:id', async (req, res) => {
         );
       }
     }
+
     await connection.commit();
+
+    await writeLog({
+      action_type: 'UPDATE',
+      table_name: 'Appointment',
+      record_id: id,
+      username: req.user.username,
+      details: `Обновлен статус приема ID: ${id} на "${status}". Кол-во оказанных услуг: ${
+        treatments?.length || 0
+      }`,
+    });
 
     await clearCache('cache:dashboard_stats');
     res.json({ message: 'Прием успешно сохранен' });
   } catch (error) {
     await connection.rollback();
+    await writeLog({
+      level: 'error',
+      action_type: 'APP_ERROR',
+      username: req.user?.username,
+      details: {
+        сообщение: error.message,
+        appointment_id: id,
+        действие: 'Ошибка транзакции (MySQL) при обновлении приема',
+      },
+    });
     res.status(500).json({ error: error.message });
   } finally {
     connection.release();
@@ -790,31 +1155,51 @@ app.put('/api/appointments/:id', async (req, res) => {
 
 app.get('/api/dashboard/stats', async (req, res) => {
   try {
+    await writeLog({
+      action_type: 'SELECT',
+      table_name: 'Сводная статистика (Dashboard)',
+      username: req.user?.username,
+      details:
+        'Генерация комплексного отчета аналитики клиники (пациенты, выручка, записи, склад)',
+    });
+
     const cachedData = await redisClient.get('cache:dashboard_stats');
     if (cachedData) {
-      console.log('[Cache] Возвращаем аналитику из кэша');
       return res.json(JSON.parse(cachedData));
     }
 
     const connection = await db.getConnection();
+
     const [patients] = await connection.query(
       'SELECT COUNT(*) as count FROM Patient'
     );
+
     const [appointmentsToday] = await connection.query(
       'SELECT COUNT(*) as count FROM Appointment WHERE DATE(date_time) = CURDATE()'
     );
+
     const [revenue] = await connection.query(`
       SELECT SUM(t.cost * at.quantity) as total 
-      FROM Appointment a JOIN Appointment_Treatment at ON a.id = at.appointment_id JOIN Treatment t ON at.treatment_id = t.id
-      WHERE a.status = 'completed' AND MONTH(a.date_time) = MONTH(CURRENT_DATE()) AND YEAR(a.date_time) = YEAR(CURRENT_DATE())
+      FROM Appointment a 
+      JOIN Appointment_Treatment at ON a.id = at.appointment_id 
+      JOIN Treatment t ON at.treatment_id = t.id
+      WHERE a.status = 'completed' 
+      AND MONTH(a.date_time) = MONTH(CURRENT_DATE()) 
+      AND YEAR(a.date_time) = YEAR(CURRENT_DATE())
     `);
+
     const [topTreatment] = await connection.query(`
       SELECT t.name, COUNT(at.treatment_id) as usage_count 
-      FROM Appointment_Treatment at JOIN Treatment t ON at.treatment_id = t.id GROUP BY t.id, t.name ORDER BY usage_count DESC LIMIT 1
+      FROM Appointment_Treatment at 
+      JOIN Treatment t ON at.treatment_id = t.id 
+      GROUP BY t.id, t.name 
+      ORDER BY usage_count DESC LIMIT 1
     `);
+
     const [lowStock] = await connection.query(
       'SELECT COUNT(*) as count FROM Material WHERE quantity < 10'
     );
+
     connection.release();
 
     const stats = {
@@ -830,19 +1215,19 @@ app.get('/api/dashboard/stats', async (req, res) => {
       300,
       JSON.stringify(stats)
     );
+
     res.json(stats);
   } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-app.get('/api/logs', async (req, res) => {
-  try {
-    const [rows] = await db.query(
-      'SELECT * FROM AuditLog ORDER BY action_time DESC LIMIT 100'
-    );
-    res.json(rows);
-  } catch (error) {
+    await writeLog({
+      level: 'error',
+      action_type: 'APP_ERROR',
+      username: req.user?.username,
+      details: {
+        сообщение: 'Сбой при формировании статистики дашборда',
+        ошибка: error.message,
+        путь: '/api/dashboard/stats',
+      },
+    });
     res.status(500).json({ error: error.message });
   }
 });
