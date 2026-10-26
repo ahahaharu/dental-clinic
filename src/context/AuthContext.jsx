@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
+import { API_URL } from '../utils/api';
 
 const AuthContext = createContext();
 
@@ -27,7 +28,7 @@ export const AuthProvider = ({ children }) => {
 
     if (currentUser && token) {
       try {
-        await fetch('http://localhost:5000/api/logout', {
+        await fetch(`${API_URL}/api/logout`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',

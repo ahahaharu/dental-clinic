@@ -3,7 +3,7 @@ import cors from 'cors';
 import 'dotenv/config';
 import db from './db.js';
 import { redisClient, redisSubscriber } from './redis.js';
-import bcrypt from 'bcrypt';
+import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { authenticateToken } from './authMiddleware.js';
 import Log, { connectMongo } from './mongo.js';
@@ -11,7 +11,7 @@ import Log, { connectMongo } from './mongo.js';
 connectMongo();
 
 const app = express();
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 5001;
 
 app.use(cors());
 app.use(express.json());
@@ -140,7 +140,8 @@ app.post('/api/login', async (req, res) => {
 
     res.json({ token, user: sessionData });
   } catch (error) {
-    next(error);
+    console.error('[Login] Ошибка:', error);
+    res.status(500).json({ message: 'Ошибка сервера при входе' });
   }
 });
 

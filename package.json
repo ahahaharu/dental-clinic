@@ -7,13 +7,17 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "server": "cd api && node server.js",
+    "add-user": "cd api && node addUser.js",
+    "db:up": "docker compose up -d",
+    "db:down": "docker compose down"
   },
   "dependencies": {
     "@ant-design/icons": "^6.1.0",
     "@tailwindcss/vite": "^4.1.17",
     "antd": "^5.29.1",
-    "bcrypt": "^6.0.0",
+    "bcryptjs": "^3.0.3",
     "cors": "^2.8.5",
     "dotenv": "^17.2.3",
     "express": "^5.1.0",

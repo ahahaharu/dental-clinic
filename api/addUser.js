@@ -1,4 +1,4 @@
-import bcrypt from 'bcrypt';
+import bcrypt from 'bcryptjs';
 import readline from 'readline/promises';
 import { stdin as input, stdout as output } from 'process';
 import db from './db.js';

@@ -72,36 +72,53 @@
 
 * **Frontend:** React.js, React Router, Ant Design (UI Kit).
 * **Backend:** Node.js, Express.js.
-* **Database:** MySQL.
+* **Database:** MySQL (основные данные), Redis (сессии, кэш, Pub/Sub), MongoDB (журнал действий).
 
 ---
 
 ## ⚙️ Запуск проекта
 
 ### Предварительные требования
-* Node.js
-* MySQL Server
+* Node.js 20+
+* Docker Desktop (MySQL, Redis и MongoDB запускаются в контейнерах — ставить их локально не нужно)
 
 ### Установка и запуск
 
-1.  **Настройка Базы Данных:**
-    * Создайте базу данных `dental_clinic`.
-    * Импортируйте структуру БД из файла `dental_clinic.sql` (или выполните скрипт создания таблиц).
-    * Настройте подключение в файле `api/db.js` (хост, логин, пароль).
-
-2.  **Запуск Бэкенда:**
+1.  **Запустите базы данных:**
     ```bash
-    cd api
-    node server.js
-    # Сервер запустится на http://localhost:5000
+    docker compose up -d
     ```
+    При первом запуске MySQL автоматически импортирует `dental_clinic.sql` (схема + тестовые данные + пользователь `admin` / `admin123`).
 
-3.  **Запуск Фронтенда:**
+2.  **Настройте окружение:**
+    ```bash
+    cp api/.env.example api/.env
+    ```
+    Значения по умолчанию совпадают с `docker-compose.yml`. Задайте свой `JWT_SECRET`.
+
+3.  **Установите зависимости:**
     ```bash
     npm install
-    npm run dev
-    # Приложение откроется на http://localhost:5173
     ```
+
+4.  **Запустите бэкенд** (в отдельном терминале):
+    ```bash
+    npm run server
+    # API: http://localhost:5001
+    ```
+
+5.  **Запустите фронтенд:**
+    ```bash
+    npm run dev
+    # Приложение: http://localhost:5173
+    ```
+
+### Полезные команды
+* `npm run add-user` — добавить пользователя (admin / dentist / assistant).
+* `docker compose down` — остановить базы (данные сохраняются).
+* `docker compose down -v` — остановить и удалить данные; при следующем `up` БД пересоздастся из `dental_clinic.sql`.
+
+> Порт 5000 на macOS занят AirPlay Receiver, поэтому API работает на 5001. Адрес API для фронтенда можно переопределить переменной `VITE_API_URL`.
 
 ---
 

@@ -1,3 +1,5 @@
+SET NAMES utf8mb4;
+
 DROP DATABASE IF EXISTS dental_clinic;
 CREATE DATABASE dental_clinic;
 USE dental_clinic;
@@ -162,6 +164,19 @@ CREATE TABLE Medical_Record (
     FOREIGN KEY (patient_id) REFERENCES Patient(id) ON DELETE CASCADE
 );
 
+-- Пользователи системы (вход по логину/паролю)
+CREATE TABLE User (
+    id INT NOT NULL AUTO_INCREMENT,
+    username VARCHAR(50) NOT NULL UNIQUE,
+    password_hash VARCHAR(255) NOT NULL,
+    role ENUM('admin', 'dentist', 'assistant') NOT NULL,
+    dentist_id INT NULL,
+    assistant_id INT NULL,
+    PRIMARY KEY (id),
+    FOREIGN KEY (dentist_id) REFERENCES Dentist(id) ON DELETE SET NULL,
+    FOREIGN KEY (assistant_id) REFERENCES Assistant(id) ON DELETE SET NULL
+);
+
 
 
 -- Пациенты
@@ -251,3 +266,7 @@ INSERT INTO Medical_Record (diagnosis, allergies, patient_id) VALUES
 ('Периодонтит', 'Пенициллин', 3),
 ('Кариес эмали', 'Нет', 4),
 ('Здоров', 'Пыльца', 5);
+
+-- Пользователи (пароль admin: admin123)
+INSERT INTO User (username, password_hash, role) VALUES
+('admin', '$2b$10$F1P.hazr0CNZeQdoO5ZDY.fn4VsVo8k0xu3rRlsFDeyoOnwUZHsYK', 'admin');

@@ -3,6 +3,7 @@ import { Form, Input, Button, Card, Typography, message, Alert } from 'antd';
 import { UserOutlined, LockOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { API_URL } from '../utils/api';
 
 const Login = () => {
   const [loading, setLoading] = useState(false);
@@ -14,7 +15,7 @@ const Login = () => {
     setLoading(true);
     setErrorMsg(null);
     try {
-      const res = await fetch('http://localhost:5000/api/login', {
+      const res = await fetch(`${API_URL}/api/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(values),
