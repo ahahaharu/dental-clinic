@@ -1,14 +1,19 @@
 import { createClient } from 'redis';
 
 const redisClient = createClient({
-  url: 'redis://127.0.0.1:6379',
+  url: process.env.REDIS_URI || 'redis://127.0.0.1:6379',
 });
 
-redisClient.on('error', (err) =>
-  console.log('Ошибка подключения к Redis:', err)
+const redisSubscriber = redisClient.duplicate();
+
+redisClient.on('error', (err) => console.log('[Redis] Ошибка клиента:', err));
+redisSubscriber.on('error', (err) =>
+  console.log('[Redis] Ошибка подписчика:', err)
 );
-redisClient.on('connect', () => console.log('Успешное подключение к Redis!'));
 
 await redisClient.connect();
+await redisSubscriber.connect();
 
-export default redisClient;
+console.log('Успешное подключение к Redis (Кэш + Pub/Sub готовы)!');
+
+export { redisClient, redisSubscriber };

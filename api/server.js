@@ -2,7 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import 'dotenv/config';
 import db from './db.js';
-import redisClient from './redis.js';
+import { redisClient, redisSubscriber } from './redis.js';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import { authenticateToken } from './authMiddleware.js';
@@ -16,15 +16,38 @@ const PORT = process.env.PORT || 5000;
 app.use(cors());
 app.use(express.json());
 
-const clearCache = async (pattern) => {
+redisSubscriber.subscribe('system_events', (message) => {
+  try {
+    const event = JSON.parse(message);
+
+    if (event.origin_pid === process.pid) {
+      return;
+    }
+
+    console.log(`[Pub/Sub] Инстанс ${process.pid} получил событие:`, event);
+  } catch (err) {
+    console.error('Ошибка обработки Pub/Sub сообщения:', err);
+  }
+});
+
+const clearCache = async (pattern, entityName = 'Data') => {
   try {
     const keys = await redisClient.keys(pattern);
     if (keys.length > 0) {
       await redisClient.del(keys);
       console.log(`[Cache] Инвалидация кэша для ключей: ${keys.join(', ')}`);
     }
+
+    const eventPayload = {
+      action: 'DATA_UPDATED',
+      entity: entityName,
+      timestamp: new Date().toISOString(),
+      origin_pid: process.pid,
+    };
+
+    await redisClient.publish('system_events', JSON.stringify(eventPayload));
   } catch (err) {
-    console.error('[Cache] Ошибка при очистке кэша:', err);
+    console.error('[Cache] Ошибка при очистке кэша/публикации:', err);
   }
 };
 
@@ -246,8 +269,8 @@ app.post('/api/patients', async (req, res) => {
       details: `Добавлен новый пациент: ${first_name} ${last_name}`,
     });
 
-    await clearCache('cache:patients*');
-    await clearCache('cache:dashboard_stats');
+    await clearCache('cache:patients*', 'Patient');
+    await clearCache('cache:dashboard_stats', 'DashboardStats');
 
     res.status(201).json({ id: result.insertId, ...req.body });
   } catch (error) {
@@ -295,7 +318,7 @@ app.put('/api/patients/:id', async (req, res) => {
       details: `Обновлена иформация пользователя с ID: ${id} (${last_name})`,
     });
 
-    await clearCache('cache:patients*');
+    await clearCache('cache:patients*', 'Patient');
     res.json({ message: 'Данные обновлены', id });
   } catch (error) {
     await writeLog({
@@ -321,8 +344,8 @@ app.delete('/api/patients/:id', async (req, res) => {
       details: `Удалён пациент с ID: ${id}`,
     });
 
-    await clearCache('cache:patients*');
-    await clearCache('cache:dashboard_stats');
+    await clearCache('cache:patients*', 'Patient');
+    await clearCache('cache:dashboard_stats', 'DashboardStats');
 
     res.json({ message: 'Пациент удален' });
   } catch (error) {
@@ -446,7 +469,7 @@ app.post('/api/dentists', async (req, res) => {
       details: `Добавлен новый стоматолог: ${last_name} (Специализация: ${specialization})`,
     });
 
-    await clearCache('cache:dentists*');
+    await clearCache('cache:dentists*', 'Dentist');
     res.status(201).json({ id: result.insertId, ...req.body });
   } catch (error) {
     await writeLog({
@@ -491,7 +514,7 @@ app.put('/api/dentists/:id', async (req, res) => {
       details: `Обновлена информация о стоматологе ID: ${id} (${last_name})`,
     });
 
-    await clearCache('cache:dentists*');
+    await clearCache('cache:dentists*', 'Dentist');
     res.json({ message: 'Стоматолог обновлен' });
   } catch (error) {
     await writeLog({
@@ -517,7 +540,7 @@ app.delete('/api/dentists/:id', async (req, res) => {
       details: `Успешное удаление стоматолога ID: ${id}`,
     });
 
-    await clearCache('cache:dentists*');
+    await clearCache('cache:dentists*', 'Dentist');
     res.json({ message: 'Стоматолог удален' });
   } catch (error) {
     if (error.errno === 1451) {
@@ -587,7 +610,7 @@ app.post('/api/assistants', async (req, res) => {
       details: `Добавлен новый ассистент: ${last_name} (Должность: ${position})`,
     });
 
-    await clearCache('cache:assistants');
+    await clearCache('cache:assistants', 'Assistant');
     res.status(201).json({ id: result.insertId, ...req.body });
   } catch (error) {
     await writeLog({
@@ -617,7 +640,7 @@ app.put('/api/assistants/:id', async (req, res) => {
       details: `Обновлена информация об ассистенте ID: ${id} (${last_name})`,
     });
 
-    await clearCache('cache:assistants');
+    await clearCache('cache:assistants', 'Assistant');
     res.json({ message: 'Ассистент обновлен' });
   } catch (error) {
     await writeLog({
@@ -643,7 +666,7 @@ app.delete('/api/assistants/:id', async (req, res) => {
       details: `Успешное удаление ассистента ID: ${id}`,
     });
 
-    await clearCache('cache:assistants');
+    await clearCache('cache:assistants', 'Assistant');
     res.json({ message: 'Ассистент удален' });
   } catch (error) {
     if (error.errno === 1451) {
@@ -686,7 +709,7 @@ app.post('/api/materials', async (req, res) => {
       'INSERT INTO Material (name, quantity, expiration_date) VALUES (?, ?, ?)',
       [name, quantity, expiration_date]
     );
-    await clearCache('cache:dashboard_stats');
+    await clearCache('cache:dashboard_stats', 'DashboardStats');
     res.status(201).json({ id: result.insertId, ...req.body });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -701,7 +724,7 @@ app.put('/api/materials/:id', async (req, res) => {
       'UPDATE Material SET name=?, quantity=?, expiration_date=? WHERE id=?',
       [name, quantity, expiration_date, id]
     );
-    await clearCache('cache:dashboard_stats');
+    await clearCache('cache:dashboard_stats', 'DashboardStats');
     res.json({ message: 'Материал обновлен' });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -711,7 +734,7 @@ app.put('/api/materials/:id', async (req, res) => {
 app.delete('/api/materials/:id', async (req, res) => {
   try {
     await db.query('DELETE FROM Material WHERE id=?', [req.params.id]);
-    await clearCache('cache:dashboard_stats');
+    await clearCache('cache:dashboard_stats', 'DashboardStats');
     res.json({ message: 'Материал удален' });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -902,7 +925,7 @@ app.post('/api/treatments', async (req, res) => {
       details: `Добавлена новая услуга: ${name} (Стоимость: ${cost} BYN, Длительность: ${duration} мин.)`,
     });
 
-    await clearCache('cache:treatments*');
+    await clearCache('cache:treatments*', 'Treatment');
     res.status(201).json({ message: 'Услуга создана' });
   } catch (error) {
     await connection.rollback();
@@ -957,7 +980,7 @@ app.put('/api/treatments/:id', async (req, res) => {
       details: `Обновлены данные услуги ID: ${id} (${name})`,
     });
 
-    await clearCache('cache:treatments*');
+    await clearCache('cache:treatments*', 'Treatment');
     res.json({ message: 'Услуга обновлена' });
   } catch (error) {
     await connection.rollback();
@@ -980,7 +1003,7 @@ app.delete('/api/treatments/:id', async (req, res) => {
       details: `Удаление услуги ID: ${id} из прайс-листа`,
     });
 
-    await clearCache('cache:treatments*');
+    await clearCache('cache:treatments*', 'Treatment');
     res.json({ message: 'Услуга удалена' });
   } catch (error) {
     if (error.errno === 1451) {
@@ -1078,7 +1101,7 @@ app.post('/api/appointments', async (req, res) => {
       details: `Запланирован новый прием для пациента ID: ${patient_id} на дату: ${date_time}`,
     });
 
-    await clearCache('cache:dashboard_stats');
+    await clearCache('cache:dashboard_stats', 'DashboardStats');
     res.status(201).json({ id: result.insertId, ...req.body });
   } catch (error) {
     await writeLog({
@@ -1133,7 +1156,7 @@ app.put('/api/appointments/:id', async (req, res) => {
       }`,
     });
 
-    await clearCache('cache:dashboard_stats');
+    await clearCache('cache:dashboard_stats', 'DashboardStats');
     res.json({ message: 'Прием успешно сохранен' });
   } catch (error) {
     await connection.rollback();
@@ -1229,6 +1252,118 @@ app.get('/api/dashboard/stats', async (req, res) => {
       },
     });
     res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/logs/stats', authenticateToken, async (req, res) => {
+  const { period = 'month' } = req.query;
+
+  try {
+    let lookbackDays = 30;
+    let dateFormat = '%Y-%m-%d';
+
+    if (period === 'day') {
+      lookbackDays = 1;
+      dateFormat = '%H:00';
+    } else if (period === 'week') {
+      lookbackDays = 7;
+      dateFormat = '%Y-%m-%d';
+    } else if (period === 'month') {
+      lookbackDays = 30;
+      dateFormat = '%Y-%m-%d';
+    }
+
+    const startDate = new Date(Date.now() - lookbackDays * 24 * 60 * 60 * 1000);
+
+    const timeFilter = { $match: { timestamp: { $gte: startDate } } };
+
+    const topUsers = await Log.aggregate([
+      timeFilter,
+      { $match: { username: { $ne: null, $ne: 'system' } } },
+      { $group: { _id: '$username', count: { $sum: 1 } } },
+      { $sort: { count: -1 } },
+      { $limit: 10 },
+      { $project: { username: '$_id', count: 1, _id: 0 } },
+    ]);
+
+    const crudStats = await Log.aggregate([
+      timeFilter,
+      { $group: { _id: '$action_type', count: { $sum: 1 } } },
+      { $sort: { count: -1 } },
+      { $project: { type: '$_id', count: 1, _id: 0 } },
+    ]);
+
+    const timeSeries = await Log.aggregate([
+      timeFilter,
+      {
+        $group: {
+          _id: {
+            $dateToString: {
+              format: dateFormat,
+              date: '$timestamp',
+              timezone: 'Europe/Minsk',
+            },
+          },
+          count: { $sum: 1 },
+        },
+      },
+      { $sort: { _id: 1 } },
+      { $project: { date: '$_id', count: 1, _id: 0 } },
+    ]);
+
+    const anomalies = await Log.aggregate([
+      timeFilter,
+      {
+        $match: {
+          action_type: {
+            $in: ['DELETE', 'APP_ERROR', 'DELETE_ERROR', 'AUTH_BLOCK'],
+          },
+        },
+      },
+      { $group: { _id: '$username', anomalyCount: { $sum: 1 } } },
+      { $match: { anomalyCount: { $gte: 5 } } },
+      { $sort: { anomalyCount: -1 } },
+      { $project: { username: '$_id', anomalyCount: 1, _id: 0 } },
+    ]);
+
+    res.json({ topUsers, crudStats, timeSeries, anomalies });
+  } catch (error) {
+    console.error('Ошибка агрегации MongoDB:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/logs/export', authenticateToken, async (req, res) => {
+  const { format } = req.query;
+  try {
+    const logs = await Log.find().sort({ timestamp: -1 }).lean();
+
+    if (format === 'csv') {
+      const header = 'Время,Тип,Пользователь,Таблица,Детали\n';
+      const rows = logs
+        .map((log) => {
+          const time = new Date(log.timestamp).toISOString();
+          const type = log.action_type || '';
+          const user = log.username || 'system';
+          const table = log.table_name || '';
+          const details = `"${JSON.stringify(log.details || '').replace(
+            /"/g,
+            '""'
+          )}"`;
+          return `${time},${type},${user},${table},${details}`;
+        })
+        .join('\n');
+
+      res.header('Content-Type', 'text/csv');
+      res.attachment('audit_logs.csv');
+      return res.send(header + rows);
+    }
+
+    res.header('Content-Type', 'application/json');
+    res.attachment('audit_logs.json');
+    res.send(JSON.stringify(logs, null, 2));
+  } catch (error) {
+    res.status(500).json({ error: 'Ошибка экспорта' });
   }
 });
 
